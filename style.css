@@ -1,0 +1,102 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght=400;600;800&family=Poppins:wght=300;400;600&display=swap');
+
+:root {
+    --primary: #00f2fe;
+    --accent: #bd00ff;
+    --danger: #ef4444;
+    --bg-dark: #0b111e;
+    --bg-card: #0f172a;
+    --bg-active: #131e35;
+}
+
+body { 
+    font-family: 'Poppins', sans-serif; 
+    background-color: var(--bg-dark); 
+}
+
+.font-orbitron { 
+    font-family: 'Orbitron', sans-serif; 
+}
+
+.video-container { 
+    position: relative; 
+    width: 100%; 
+    height: 100%; 
+    background: #000; 
+}
+
+canvas { 
+    position: absolute; 
+    top: 0; 
+    left: 0; 
+    width: 100%; 
+    height: 100%; 
+    z-index: 10; 
+    pointer-events: none; 
+}
+
+.log-row {
+    display: grid; 
+    grid-template-columns: 1.2fr 1fr 0.8fr; 
+    align-items: center;
+    background-color: rgba(19, 30, 53, 0.4); 
+    padding: 10px 12px; 
+    border-radius: 6px;
+    margin-bottom: 6px; 
+    font-family: monospace; 
+    font-size: 12px; 
+    border: 1px solid transparent;
+    transition: all 0.2s ease-in-out;
+}
+
+.log-row:hover { 
+    background-color: rgba(19, 30, 53, 0.8); 
+    border-color: #1e293b; 
+}
+
+.laser-line {
+    position: absolute; 
+    top: 0; 
+    width: 100%; 
+    height: 2px; 
+    background: var(--primary);
+    box-shadow: 0 0 15px var(--primary); 
+    animation: scanLine 2.5s infinite linear; 
+    z-index: 5;
+}
+
+@keyframes scanLine { 
+    0% { top: 0; } 
+    100% { top: 100%; } 
+}
+
+/* 🚨 Threat Banner Glow Animation */
+#threatBanner {
+    animation: threatGlow 1.2s infinite alternate ease-in-out;
+}
+
+@keyframes threatGlow {
+    0% {
+        box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+        border-color: #ef4444;
+    }
+    100% {
+        box-shadow: 0 0 25px rgba(239, 68, 68, 0.9);
+        border-color: #f87171;
+    }
+}
+
+/* 🪟 Custom Scrollbar for Logs */
+::-webkit-scrollbar {
+    width: 4px;
+}
+::-webkit-scrollbar-track {
+    background: var(--bg-card);
+}
+::-webkit-scrollbar-thumb {
+    background: #1e293b;
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--primary);
+}

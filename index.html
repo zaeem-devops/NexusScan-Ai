@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NexusScan AI - Physical Security System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="text-slate-200 min-h-screen flex flex-col justify-between bg-[#0b111e]">
+
+    <!-- HEADER -->
+    <header class="bg-[#0f172a] border-b border-slate-800 px-6 py-3 flex justify-between items-center text-sm sticky top-0 z-40">
+        <div class="flex items-center space-x-6">
+            <span class="text-[#38bdf8] font-orbitron font-bold tracking-wider text-base">NEXUSSCAN AI PRO</span>
+            <nav class="hidden md:flex space-x-4 text-xs font-semibold">
+                <button onclick="location.reload()" class="text-[#38bdf8] border-b-2 border-[#38bdf8] pb-1">Security View</button>
+                <button onclick="accessFacultyView()" class="text-slate-400 hover:text-slate-200 transition">Faculty View</button>
+            </nav>
+        </div>
+        <div class="flex items-center space-x-4 text-slate-400">
+            <input id="logSearch" type="text" placeholder="Search logs..." class="bg-[#131e35] border border-slate-700 rounded px-2.5 py-1 text-xs text-white focus:outline-none focus:border-[#38bdf8]">
+            <i data-lucide="radio" class="w-4 h-4 text-[#38bdf8] animate-pulse"></i>
+        </div>
+    </header>
+
+    <!-- MAIN WRAPPER -->
+    <div class="flex flex-1 h-[calc(100vh-90px)] overflow-hidden">
+        
+        <!-- LEFT SIDEBAR -->
+        <aside class="w-64 bg-[#0f172a] border-r border-slate-800 p-4 flex flex-col justify-between overflow-y-auto">
+            <div class="space-y-4">
+                <div class="bg-[#131e35] p-3 rounded-lg border border-slate-800">
+                    <div class="text-xs font-bold text-slate-400 flex items-center gap-2 mb-1">
+                        <i data-lucide="monitor" class="w-4 h-4 text-[#38bdf8]"></i>
+                        <span>SYSTEM VITALITY</span>
+                    </div>
+                    <div class="text-[11px] text-emerald-400 font-medium flex items-center gap-1.5" id="vitalityContainer">
+                        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                        <span id="systemStatus">Initializing AI Models...</span>
+                    </div>
+                </div>
+
+                <div class="bg-[#131e35]/50 p-3 rounded-lg border border-slate-800/60 space-y-2 text-xs">
+                    <div class="flex justify-between"><span>Present:</span> <span id="presentStat" class="text-emerald-400 font-bold">0</span></div>
+                    <div class="flex justify-between"><span>Late Today:</span> <span id="lateStat" class="text-amber-400 font-bold">0</span></div>
+                    <div class="flex justify-between"><span>Threats Detected:</span> <span id="unknownStat" class="text-rose-500 font-bold">0</span></div>
+                </div>
+
+                <!-- ACTIONS NAV -->
+                <nav class="space-y-2 text-xs font-semibold">
+                    <button onclick="openVisitorModal()" class="w-full flex items-center space-x-3 bg-cyan-500/20 border border-cyan-500 text-cyan-300 hover:bg-cyan-500/30 p-2.5 rounded text-left transition">
+                        <i data-lucide="user-check" class="w-4 h-4 text-cyan-400"></i>
+                        <span>Smart Visitor Entry</span>
+                    </button>
+
+                    <button onclick="triggerEmergencyAlert()" class="w-full flex items-center space-x-3 bg-rose-600/20 border border-rose-500 text-rose-300 hover:bg-rose-600/40 p-2.5 rounded text-left transition animate-pulse">
+                        <i data-lucide="siren" class="w-4 h-4 text-rose-400"></i>
+                        <span class="font-bold">EMERGENCY RED ALERT</span>
+                    </button>
+
+                    <button onclick="manualEntry()" class="w-full flex items-center space-x-3 bg-emerald-500/20 border border-emerald-500 text-emerald-300 hover:bg-emerald-500/30 p-2.5 rounded text-left transition">
+                        <i data-lucide="keyboard" class="w-4 h-4"></i>
+                        <span>Manual Entry</span>
+                    </button>
+
+                    <button onclick="markLeaveEntry()" class="w-full flex items-center space-x-3 bg-amber-500/20 border border-amber-500 text-amber-300 hover:bg-amber-500/30 p-2.5 rounded text-left transition">
+                        <i data-lucide="user-x" class="w-4 h-4"></i>
+                        <span>Mark Leave</span>
+                    </button>
+
+                    <button onclick="clearDatabase()" class="w-full flex items-center space-x-3 text-slate-400 hover:bg-rose-950/30 hover:text-rose-400 p-2.5 rounded text-left transition">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        <span>Clear Logs</span>
+                    </button>
+                </nav>
+
+                <div id="facultySection" class="hidden border-t border-purple-900/50 pt-4 space-y-2">
+                    <span class="text-[10px] text-purple-400 font-bold tracking-wider block">FACULTY CONTROLS</span>
+                    <button onclick="location.reload()" class="w-full bg-purple-900/30 border border-purple-500/40 text-purple-200 text-xs py-2 rounded hover:bg-purple-800/40 transition">Force Reboot</button>
+                </div>
+            </div>
+
+            <a href="http://localhost:3000/api/export/excel" target="_blank" class="block w-full text-center border border-[#38bdf8]/40 hover:border-[#38bdf8] text-[#38bdf8] text-xs font-bold py-2.5 rounded transition tracking-wider mt-4">
+                Export Logs (.xlsx)
+            </a>
+        </aside>
+
+        <!-- CENTER VIDEO SCANNER AREA -->
+        <main class="flex-1 p-6 flex flex-col space-y-4 overflow-hidden relative">
+            <div class="flex justify-between items-center text-[11px] font-mono tracking-widest text-slate-400 px-1">
+                <span class="font-bold text-slate-200">SECURITY_NODE_01 <span class="ml-2 text-emerald-400 text-[9px] bg-emerald-950 px-1.5 py-0.5 rounded border border-emerald-800">ACTIVE CAMERA</span></span>
+                <span id="liveClock">00:00:00 AM</span>
+            </div>
+
+            <!-- CAMERA WRAPPER WITH THREAT BANNER OVERLAY -->
+            <div class="scanner-wrapper bg-black flex-1 rounded-xl border border-slate-800 relative overflow-hidden flex items-center justify-center">
+                
+                <!-- 🚨 NEW FEATURE 1: Red Threat Alert Overlay -->
+                <div id="threatBanner" class="hidden absolute top-4 left-4 right-4 bg-rose-950/90 border-2 border-rose-500 text-rose-200 p-3 rounded-lg z-30 flex items-center justify-between shadow-2xl backdrop-blur">
+                    <div class="flex items-center space-x-3">
+                        <i data-lucide="shield-alert" class="w-6 h-6 text-rose-500 animate-bounce"></i>
+                        <div>
+                            <div class="text-xs font-bold tracking-widest text-rose-400 font-orbitron">SECURITY THREAT DETECTED</div>
+                            <div id="threatDetails" class="text-[11px]">Unauthorized Access Attempt</div>
+                        </div>
+                    </div>
+                    <span class="text-xs font-mono bg-rose-900 px-2 py-1 rounded text-rose-300 border border-rose-700">WHATSAPP DISPATCHED</span>
+                </div>
+
+                <div class="laser-line"></div>
+                <div class="video-container flex items-center justify-center bg-slate-950 w-full h-full">
+                    <video id="video" autoplay muted playsinline class="w-full h-full object-cover"></video>
+                </div>
+            </div>
+        </main>
+
+        <!-- RIGHT SIDEBAR (LOGS) -->
+        <aside class="w-80 bg-[#0f172a] border-l border-slate-800 p-4 flex flex-col justify-between overflow-hidden">
+            <div class="flex flex-col flex-1 overflow-hidden">
+                <div class="flex justify-between items-center pb-3 border-b border-slate-800 mb-3">
+                    <span class="text-xs font-bold tracking-wider text-slate-300 font-orbitron">SECURITY ACCESS LOGS</span>
+                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5 text-slate-400 cursor-pointer" onclick="location.reload()"></i>
+                </div>
+
+                <div class="grid grid-cols-3 text-[10px] font-bold tracking-wider text-slate-500 mb-2 px-2">
+                    <span>NAME</span>
+                    <span>TIMESTAMP</span>
+                    <span class="text-right">STATUS</span>
+                </div>
+
+                <div id="attendanceBody" class="overflow-y-auto flex-1 pr-1 max-h-[calc(100vh-250px)]"></div>
+            </div>
+
+            <div class="mt-4 pt-3 border-t border-slate-800 text-[11px] flex justify-between items-center font-mono text-slate-500">
+                <span>AI Anti-Spoofing</span>
+                <span class="text-emerald-400 font-bold">ACTIVE (0.04s)</span>
+            </div>
+        </aside>
+
+    </div>
+
+    <!-- 📩 NEW FEATURE 2: Smart Visitor Approval Modal -->
+    <div id="visitorModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-[#0f172a] border border-slate-700 w-full max-w-md rounded-xl p-6 space-y-4 shadow-2xl">
+            <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                <h3 class="text-sm font-bold text-[#38bdf8] tracking-wider font-orbitron">SMART VISITOR ENTRY</h3>
+                <button onclick="closeVisitorModal()" class="text-slate-400 hover:text-white text-lg">&times;</button>
+            </div>
+            <div class="space-y-3 text-xs">
+                <div>
+                    <label class="text-slate-400 block mb-1">Visitor Full Name</label>
+                    <input id="visName" type="text" placeholder="e.g. Ali Ahmed" class="w-full bg-[#131e35] border border-slate-700 rounded p-2.5 text-white focus:outline-none focus:border-[#38bdf8]">
+                </div>
+                <div>
+                    <label class="text-slate-400 block mb-1">CNIC / Passport No</label>
+                    <input id="visCNIC" type="text" placeholder="35201-XXXXXXX-X" class="w-full bg-[#131e35] border border-slate-700 rounded p-2.5 text-white focus:outline-none focus:border-[#38bdf8]">
+                </div>
+                <div>
+                    <label class="text-slate-400 block mb-1">Host WhatsApp Phone No</label>
+                    <input id="hostPhone" type="text" placeholder="e.g. 923236404459" class="w-full bg-[#131e35] border border-slate-700 rounded p-2.5 text-white focus:outline-none focus:border-[#38bdf8]">
+                </div>
+                <div>
+                    <label class="text-slate-400 block mb-1">Purpose of Visit</label>
+                    <input id="visPurpose" type="text" placeholder="e.g. Official Meeting" class="w-full bg-[#131e35] border border-slate-700 rounded p-2.5 text-white focus:outline-none focus:border-[#38bdf8]">
+                </div>
+            </div>
+            <div class="flex space-x-3 pt-2">
+                <button onclick="closeVisitorModal()" class="w-1/2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold py-2.5 rounded text-xs transition">
+                    Cancel
+                </button>
+                <button onclick="sendVisitorRequest()" class="w-1/2 bg-[#38bdf8] hover:bg-[#0284c7] text-slate-950 font-bold py-2.5 rounded text-xs transition">
+                    Send Request
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- FOOTER -->
+    <footer class="bg-[#0f172a] border-t border-slate-800 px-6 py-2.5 flex justify-between items-center text-[11px] font-mono text-slate-500 sticky bottom-0 z-40">
+        <span>&copy; 2026 NexusScan AI Command Center. All systems operational.</span>
+        <div>SYSTEM_LATENCY: <span class="text-emerald-400 font-bold">12ms</span></div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
