@@ -492,10 +492,13 @@ async function handleMessage(msg) {
     try {
         const rawText = (msg.body || '').trim();
         const upperText = rawText.toUpperCase();
-
-        console.log(`📨 Incoming WhatsApp command from ${msg.from}: "${rawText}"`);
-
         const admin = isAdminChat(msg.from);
+
+        // Only log recognized commands to prevent printing personal chats to the terminal
+        const isCommand = ['STATUS', 'LOCK', 'UNLOCK', '1', '2'].includes(upperText) || upperText.startsWith('ANNOUNCE ');
+        if (isCommand) {
+            console.log(`📨 Incoming WhatsApp command from ${msg.from}: "${rawText}"`);
+        }
 
         // Admin-only commands
         if (upperText === 'STATUS' || upperText === 'LOCK' || upperText === 'UNLOCK' || upperText.startsWith('ANNOUNCE ')) {
