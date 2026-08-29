@@ -22,6 +22,15 @@
             </nav>
         </div>
         <div class="flex items-center space-x-3 text-slate-400">
+            <!-- 👤 User Badge & Role -->
+            <div id="userProfileBadge" class="flex items-center gap-2 bg-[#131e35] border border-slate-700 px-3 py-1 rounded-full text-xs">
+                <span id="userRoleIndicator" class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                <span id="headerUserName" class="text-slate-300 font-semibold font-mono">Guard Officer</span>
+                <span id="headerUserRole" class="text-[10px] bg-slate-800 text-[#38bdf8] font-bold px-1.5 py-0.5 rounded uppercase font-mono">GUARD</span>
+                <button onclick="logoutUser()" title="Logout" class="text-slate-400 hover:text-rose-400 ml-1">
+                    <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+                </button>
+            </div>
             <input id="logSearch" type="text" placeholder="Search logs..." class="bg-[#131e35] border border-slate-700 rounded px-2.5 py-1 text-xs text-white focus:outline-none focus:border-[#38bdf8]">
             <!-- 📱 Mobile Guard View Toggle -->
             <button onclick="openMobileGuardView()" title="Mobile Guard View"
@@ -396,6 +405,68 @@
                     </button>
                 </div>
                 <div class="text-[10px] text-slate-600 mt-1.5 text-center">Voice or text · Powered by NexusScan AI Engine</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🔐 RBAC LOGIN OVERLAY -->
+    <div id="loginOverlay" class="fixed inset-0 bg-[#080d17]/95 backdrop-blur-md z-50 flex items-center justify-center p-4">
+        <div class="bg-[#0f172a] border border-cyan-500/50 rounded-2xl w-full max-w-md p-6 shadow-2xl relative space-y-5" style="box-shadow: 0 0 50px rgba(56,189,248,0.2)">
+            <!-- Top Branding -->
+            <div class="text-center space-y-1">
+                <div class="inline-flex p-3 rounded-full bg-cyan-950/60 border border-cyan-500/40 text-cyan-400 mb-2">
+                    <i data-lucide="shield-check" class="w-8 h-8"></i>
+                </div>
+                <h2 class="text-lg font-bold font-orbitron text-cyan-300 tracking-wider">NEXUSSCAN COMMAND ACCESS</h2>
+                <p class="text-xs text-slate-400">Zero-Trust Role-Based Physical Security Gateway</p>
+            </div>
+
+            <!-- Error Banner -->
+            <div id="loginError" class="hidden bg-rose-950/60 border border-rose-600 text-rose-300 text-xs px-3 py-2 rounded-lg text-center font-mono"></div>
+
+            <!-- Login Form -->
+            <form onsubmit="handleLoginSubmit(event)" class="space-y-4">
+                <div class="space-y-1">
+                    <label class="text-[11px] font-mono font-bold text-slate-400">OPERATOR USERNAME</label>
+                    <div class="relative">
+                        <i data-lucide="user" class="w-4 h-4 text-slate-500 absolute left-3 top-3"></i>
+                        <input id="loginUsername" type="text" required placeholder="admin / guard / faculty"
+                            class="w-full bg-[#131e35] border border-slate-700 focus:border-cyan-500 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-600 focus:outline-none">
+                    </div>
+                </div>
+
+                <div class="space-y-1">
+                    <label class="text-[11px] font-mono font-bold text-slate-400">SECURITY PASSPHRASE</label>
+                    <div class="relative">
+                        <i data-lucide="key" class="w-4 h-4 text-slate-500 absolute left-3 top-3"></i>
+                        <input id="loginPassword" type="password" required placeholder="Enter password"
+                            class="w-full bg-[#131e35] border border-slate-700 focus:border-cyan-500 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-600 focus:outline-none">
+                    </div>
+                </div>
+
+                <button type="submit" id="loginSubmitBtn"
+                    class="w-full py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold font-orbitron tracking-wider rounded-xl transition shadow-lg flex items-center justify-center gap-2">
+                    <i data-lucide="log-in" class="w-4 h-4"></i> AUTHENTICATE
+                </button>
+            </form>
+
+            <!-- Quick Demo Role Switches -->
+            <div class="pt-3 border-t border-slate-800 text-center">
+                <div class="text-[10px] font-mono text-slate-500 mb-2">QUICK DEMO ACCESS (1-CLICK)</div>
+                <div class="grid grid-cols-3 gap-2">
+                    <button onclick="quickLogin('guard', 'guard123')"
+                        class="bg-[#131e35] hover:bg-slate-800 border border-emerald-500/40 text-emerald-400 text-[10px] font-bold py-1.5 rounded-lg transition">
+                        👮 Guard
+                    </button>
+                    <button onclick="quickLogin('faculty', 'faculty123')"
+                        class="bg-[#131e35] hover:bg-slate-800 border border-indigo-500/40 text-indigo-400 text-[10px] font-bold py-1.5 rounded-lg transition">
+                        🎓 Faculty
+                    </button>
+                    <button onclick="quickLogin('admin', 'admin123')"
+                        class="bg-[#131e35] hover:bg-slate-800 border border-cyan-500/40 text-cyan-400 text-[10px] font-bold py-1.5 rounded-lg transition">
+                        🔐 Admin
+                    </button>
+                </div>
             </div>
         </div>
     </div>
