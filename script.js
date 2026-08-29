@@ -497,7 +497,7 @@ function detectFaces() {
                         "Denied"
                     );
                     triggerThreatUI(threatMsg, captureThreatSnapshot());
-                    setTimeout(() => { unknownDetected = false; }, 5000);
+                    setTimeout(() => { unknownDetected = false; }, 30000);
                 }
             }
         } catch (e) {

@@ -2,11 +2,10 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const mongoose = require('mongoose');
+
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
 const XLSX = require('xlsx');
 require('dotenv').config();
 
@@ -40,6 +39,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'nexus_scan_ai_secret_key_productio
 
 // 🔐 Configuration (see .env.example)
 const SECURITY_PHONE = process.env.SECURITY_PHONE || '03236404459';
+const GUARD_PHONE = process.env.GUARD_PHONE || SECURITY_PHONE;  // Guard gets visitor alerts
 const ADMIN_WHITELIST = (process.env.ADMIN_WHITELIST || '')
     .split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean)
     .map(d => d.startsWith('03') ? '92' + d.substring(1) : d);
@@ -48,106 +48,72 @@ const ADMIN_WHITELIST = (process.env.ADMIN_WHITELIST || '')
 let isSystemLocked = false;
 let currentAnnouncement = "";
 
+// 🛡️ Anti-Spam Cooldown for WhatsApp Alerts (prevents message flooding)
+const THREAT_COOLDOWN_MS = 30000;     // 30 seconds between threat alerts
+const ATTENDANCE_COOLDOWN_MS = 5000;  // 5 seconds between attendance alerts for same person
+let lastThreatAlertTime = 0;
+let lastAttendanceAlerts = {};        // { "name": timestamp }
+
 // ============================================================
-// 🗄️ MongoDB Models + Hybrid Memory Fallback
+// 🗄️ NeDB — File-Based Persistent Database (No Installation Needed)
+// Data saves permanently in /data/*.db files
 // ============================================================
-const UserSchema = new mongoose.Schema({
-    username: { type: String, required: true, unique: true },
-    passwordHash: { type: String, required: true },
-    role: { type: String, enum: ['admin', 'guard', 'faculty'], default: 'guard' },
-    name: { type: String, default: '' },
-    createdAt: { type: Date, default: Date.now }
-});
+const Datastore = require('@seald-io/nedb');
 
-const BiometricSchema = new mongoose.Schema({
-    name: { type: String, required: true, unique: true },
-    role: { type: String, default: 'Student' },
-    descriptors: { type: [[Number]], required: true }, 
-    samplesCount: { type: Number, default: 0 },
-    createdAt: { type: Date, default: Date.now }
-});
+const dataDir = path.join(__dirname, 'data');
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-const AttendanceSchema = new mongoose.Schema({
-    name: String,
-    status: String,
-    time: String,
-    date: { type: String, default: () => new Date().toDateString() },
-    createdAt: { type: Date, default: Date.now }
-});
-
-const VisitorPassSchema = new mongoose.Schema({
-    visitorName: String,
-    cnic: String,
-    hostPhone: String,
-    purpose: String,
-    status: { type: String, default: 'pending' },
-    passCode: String,
-    usedAt: Date,
-    createdAt: { type: Date, default: Date.now }
-});
-
-const ThreatSchema = new mongoose.Schema({
-    reason: String,
-    hasSnapshot: { type: Boolean, default: false },
-    createdAt: { type: Date, default: Date.now }
-});
-
-const User = mongoose.model('User', UserSchema);
-const Biometric = mongoose.model('Biometric', BiometricSchema);
-const Attendance = mongoose.model('Attendance', AttendanceSchema);
-const VisitorPass = mongoose.model('VisitorPass', VisitorPassSchema);
-const Threat = mongoose.model('Threat', ThreatSchema);
-
-const memoryStore = {
-    users: [],
-    biometrics: [],
-    attendance: [],
-    passes: [],
-    threats: []
+// 📁 Separate .db file for each collection — permanent on disk
+const db = {
+    users:      new Datastore({ filename: path.join(dataDir, 'users.db'),      autoload: true }),
+    biometrics: new Datastore({ filename: path.join(dataDir, 'biometrics.db'), autoload: true }),
+    attendance: new Datastore({ filename: path.join(dataDir, 'attendance.db'), autoload: true }),
+    passes:     new Datastore({ filename: path.join(dataDir, 'passes.db'),     autoload: true }),
+    threats:    new Datastore({ filename: path.join(dataDir, 'threats.db'),    autoload: true }),
 };
-let mongoReady = false;
 
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/nexusScanAI';
+// Unique indexes
+db.users.ensureIndex({ fieldName: 'username', unique: true });
+db.biometrics.ensureIndex({ fieldName: 'name', unique: true });
 
-mongoose.connect(MONGO_URI)
-    .then(async () => {
-        mongoReady = true;
-        console.log('✅ MongoDB Connected Successfully!');
-        await seedDefaultUsers();
-    })
-    .catch(async () => {
-        console.log('⚠️ Local MongoDB not detected! Running server in Hybrid Memory Mode.');
-        await seedDefaultUsers();
-    });
+console.log('✅ NeDB File Database Loaded — Data saves permanently in /data/ folder.');
 
+// ============================================================
+// 🔐 Seed Default Users (only if not already in DB)
+// ============================================================
 async function seedDefaultUsers() {
     const defaultAccounts = [
-        { username: 'admin', password: process.env.ADMIN_PASSWORD || 'admin123', role: 'admin', name: 'Chief Security Officer' },
-        { username: 'guard', password: 'guard123', role: 'guard', name: 'Main Gate Officer' },
-        { username: 'faculty', password: 'faculty123', role: 'faculty', name: 'Department Faculty' }
+        { username: 'admin',   password: process.env.ADMIN_PASSWORD   || 'admin123',   role: 'admin',   name: 'Chief Security Officer' },
+        { username: 'guard',   password: process.env.GUARD_PASSWORD   || 'guard123',   role: 'guard',   name: 'Main Gate Officer'      },
+        { username: 'faculty', password: process.env.FACULTY_PASSWORD || 'faculty123', role: 'faculty', name: 'Department Faculty'      }
     ];
 
     for (const acc of defaultAccounts) {
-        const hash = await bcrypt.hash(acc.password, 10);
-        if (mongoReady) {
-            const exists = await User.findOne({ username: acc.username });
-            if (!exists) {
-                await User.create({ username: acc.username, passwordHash: hash, role: acc.role, name: acc.name });
-            }
-        } else {
-            const exists = memoryStore.users.find(u => u.username === acc.username);
-            if (!exists) {
-                memoryStore.users.push({ username: acc.username, passwordHash: hash, role: acc.role, name: acc.name });
-            }
+        const existing = await db.users.findOneAsync({ username: acc.username });
+        if (!existing) {
+            const hash = await bcrypt.hash(acc.password, 10);
+            await db.users.insertAsync({
+                username:     acc.username,
+                passwordHash: hash,
+                role:         acc.role,
+                name:         acc.name,
+                phone:        '',
+                createdAt:    new Date()
+            });
+            console.log(`👤 Default user created: ${acc.username} (${acc.role})`);
         }
     }
-    console.log('🔐 RBAC System Active: Default Accounts (admin, guard, faculty) Ready.');
+    console.log('🔐 RBAC System Active — Default accounts ready (admin, guard, faculty).');
 }
+seedDefaultUsers();
 
+// ============================================================
+// 🔑 JWT Middleware
+// ============================================================
 function authenticateJWT(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
-    if (!token) return res.status(401).json({ success: false, error: 'Unauthorized: Authentication token required.' });
+    if (!token) return res.status(401).json({ success: false, error: 'Unauthorized: Token required.' });
     jwt.verify(token, JWT_SECRET, (err, user) => {
         if (err) return res.status(403).json({ success: false, error: 'Forbidden: Invalid or expired token.' });
         req.user = user;
@@ -164,71 +130,70 @@ function requireRole(allowedRoles = []) {
     };
 }
 
+// ============================================================
+// 🗃️ Database Helper Functions
+// ============================================================
 async function saveAttendance(record) {
-    if (mongoReady) { await Attendance.create(record); return; }
-    record.date = record.date || new Date().toDateString();
-    memoryStore.attendance.push({ ...record, createdAt: new Date() });
+    record.date      = record.date || new Date().toDateString();
+    record.createdAt = new Date();
+    return db.attendance.insertAsync(record);
 }
 
 async function findAttendanceToday(name) {
     const today = new Date().toDateString();
-    if (mongoReady) return Attendance.findOne({ name, date: today, status: { $in: ['Present', 'Late'] } });
-    return memoryStore.attendance.find(r => r.name === name && r.date === today && ['Present', 'Late'].includes(r.status));
+    return db.attendance.findOneAsync({ name, date: today, status: { $in: ['Present', 'Late'] } });
 }
 
 async function getAllAttendance() {
-    if (mongoReady) return Attendance.find().sort({ createdAt: -1 }).limit(500);
-    return [...memoryStore.attendance].reverse();
+    const records = await db.attendance.findAsync({});
+    return records.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 500);
 }
 
 async function saveVisitorPass(doc) {
-    if (mongoReady) return VisitorPass.create(doc);
-    const copy = { ...doc, createdAt: new Date() };
-    memoryStore.passes.push(copy);
-    return copy;
+    doc.createdAt = new Date();
+    return db.passes.insertAsync(doc);
 }
 
 async function updateVisitorPass(id, patch) {
-    if (mongoReady) return VisitorPass.findByIdAndUpdate(id, patch, { new: true });
-    const doc = memoryStore.passes.find(p => String(p._id || p.id) === String(id));
-    if (doc) Object.assign(doc, patch);
-    return doc;
+    await db.passes.updateAsync({ _id: id }, { $set: patch });
+    return db.passes.findOneAsync({ _id: id });
 }
 
 async function findPendingPassForHost(hostPhone) {
-    if (mongoReady) return VisitorPass.findOne({ hostPhone, status: 'pending' }).sort({ createdAt: -1 });
-    return [...memoryStore.passes].reverse().find(p => p.hostPhone === hostPhone && p.status === 'pending');
+    const passes = await db.passes.findAsync({ hostPhone, status: 'pending' });
+    return passes.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
 }
 
 async function findPassByCode(passCode) {
-    if (mongoReady) return VisitorPass.findOne({ passCode });
-    return memoryStore.passes.find(p => p.passCode === passCode);
+    return db.passes.findOneAsync({ passCode });
 }
 
 async function saveThreat(doc) {
-    if (mongoReady) { await Threat.create(doc); return; }
-    memoryStore.threats.push({ ...doc, createdAt: new Date() });
+    doc.createdAt = new Date();
+    return db.threats.insertAsync(doc);
 }
 
 async function countThreatsToday() {
-    if (mongoReady) return Threat.countDocuments({ createdAt: { $gte: new Date(new Date().setHours(0, 0, 0, 0)) } });
-    const today = new Date().toDateString();
-    return memoryStore.threats.filter(t => new Date(t.createdAt).toDateString() === today).length;
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const threats = await db.threats.findAsync({ createdAt: { $gte: startOfDay } });
+    return threats.length;
 }
 
 async function getAllBiometrics() {
-    if (mongoReady) return Biometric.find();
-    return memoryStore.biometrics;
+    return db.biometrics.findAsync({});
 }
 
 async function saveBiometric(name, descriptors, role = 'Student') {
-    if (mongoReady) {
-        return Biometric.findOneAndUpdate({ name }, { name, descriptors, role, samplesCount: descriptors.length, createdAt: new Date() }, { upsert: true, new: true });
+    const existing = await db.biometrics.findOneAsync({ name: { $regex: new RegExp(`^${name}$`, 'i') } });
+    const doc = { name, descriptors, role, samplesCount: descriptors.length, updatedAt: new Date() };
+    if (existing) {
+        await db.biometrics.updateAsync({ _id: existing._id }, { $set: doc });
+        return { ...existing, ...doc };
+    } else {
+        doc.createdAt = new Date();
+        return db.biometrics.insertAsync(doc);
     }
-    const idx = memoryStore.biometrics.findIndex(b => b.name.toLowerCase() === name.toLowerCase());
-    const doc = { name, descriptors, role, samplesCount: descriptors.length, createdAt: new Date() };
-    if (idx >= 0) memoryStore.biometrics[idx] = doc; else memoryStore.biometrics.push(doc);
-    return doc;
 }
 
 function euclideanDistance(d1, d2) {
@@ -272,12 +237,7 @@ app.post('/api/auth/login', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Username and password required.' });
         }
 
-        let user = null;
-        if (mongoReady) {
-            user = await User.findOne({ username: username.toLowerCase().trim() });
-        } else {
-            user = memoryStore.users.find(u => u.username.toLowerCase() === username.toLowerCase().trim());
-        }
+        let user = await db.users.findOneAsync({ username: username.toLowerCase().trim() });
 
         if (!user) {
             return res.status(401).json({ success: false, error: 'Invalid username or password.' });
@@ -545,13 +505,26 @@ app.post('/api/attendance', async (req, res) => {
     }
 });
 
-// 🚨 Emergency Threat Alert
+// 🚨 Emergency Threat Alert (with Anti-Spam Cooldown)
 app.post('/api/threat-alert', async (req, res) => {
     try {
         const { reason, snapshot } = req.body || {};
         await saveThreat({ reason: reason || 'Unknown threat', hasSnapshot: Boolean(snapshot) });
 
+        // 🛡️ Anti-Spam: Only send WhatsApp alert if 30 seconds have passed since last one
+        const now = Date.now();
+        const timeSinceLast = now - lastThreatAlertTime;
+
+        if (timeSinceLast < THREAT_COOLDOWN_MS) {
+            const waitSec = Math.ceil((THREAT_COOLDOWN_MS - timeSinceLast) / 1000);
+            console.log(`🛡️ Threat logged but WhatsApp alert suppressed (cooldown: ${waitSec}s remaining)`);
+            return res.json({ success: true, message: `Threat logged. WhatsApp alert on cooldown (${waitSec}s).`, suppressed: true });
+        }
+
+        lastThreatAlertTime = now;
+
         const securityNumber = formatWhatsAppNumber(SECURITY_PHONE);
+        const guardNumber = formatWhatsAppNumber(GUARD_PHONE);
         const alertMsg = `🚨 *EMERGENCY BREACH ALERT:*\n${reason || 'Unidentified Threat or Security Bypass Detected at Main Gate!'}` +
             `\n⏰ ${new Date().toLocaleTimeString()}`;
 
@@ -560,8 +533,15 @@ app.post('/api/threat-alert', async (req, res) => {
                 const base64 = snapshot.replace(/^data:image\/\w+;base64,/, '');
                 const media = new MessageMedia('image/jpeg', base64, 'nexus-threat-capture.jpg');
                 await whatsappClient.sendMessage(securityNumber, media, { caption: alertMsg });
+                // Also alert guard if different number
+                if (guardNumber !== securityNumber) {
+                    await whatsappClient.sendMessage(guardNumber, media, { caption: alertMsg });
+                }
             } else {
                 await whatsappClient.sendMessage(securityNumber, alertMsg);
+                if (guardNumber !== securityNumber) {
+                    await whatsappClient.sendMessage(guardNumber, alertMsg);
+                }
             }
         }
         return res.json({ success: true, message: 'Threat alert broadcast fired!' });
@@ -768,7 +748,7 @@ async function handleMessage(msg) {
                     `📌 Status: Valid for Today (single entry)`;
                 await msg.reply(approvalMsg);
 
-                const guardNumber = formatWhatsAppNumber(SECURITY_PHONE);
+                const guardNumber = formatWhatsAppNumber(GUARD_PHONE);
                 const hostNumber = String(msg.from).replace('@c.us', '');
                 const guardAlertMsg = `🛂 *GATE ALERT: Visitor Approved*\n\n` +
                     `👤 *Visitor:* ${pending.visitorName}\n` +
@@ -800,4 +780,6 @@ app.listen(PORT, '127.0.0.1', () => {
     console.log(`🚀 NexusScan AI Backend Engine Running on http://127.0.0.1:${PORT}`);
 });
 
-whatsappClient.initialize();
+whatsappClient.initialize().catch(err => {
+    console.warn('⚠️ WhatsApp initialization note:', err.message);
+});
