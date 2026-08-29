@@ -437,11 +437,12 @@ function updateLiveness(box, landmarks) {
 // ============================================================
 // 🛡️ SERVER-DRIVEN FACE DETECTION & DECISION LOOP
 // ============================================================
+let isLoopRunning = false;
+let loopTimeoutId = null;
+
 function detectFaces() {
-    if (detectionInterval) {
-        clearInterval(detectionInterval);
-        detectionInterval = null;
-    }
+    isLoopRunning = true;
+    if (loopTimeoutId) clearTimeout(loopTimeoutId);
 
     const container = document.querySelector('.video-container') || document.querySelector('.scanner-wrapper') || document.getElementById('cameraContainer');
     const existingCanvas = container?.querySelector('canvas');
@@ -463,155 +464,166 @@ function detectFaces() {
     const displaySize = { width: video.offsetWidth || 640, height: video.offsetHeight || 480 };
     faceapi.matchDimensions(canvas, displaySize);
 
-    detectionInterval = setInterval(async () => {
-        if (detecting) return;
-        detecting = true;
-        try {
-            if (video.paused || video.ended || isSystemLocked) {
-                detecting = false;
-                return;
-            }
+    async function step() {
+        if (!isLoopRunning) return;
 
-            const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.25 }))
-                .withFaceLandmarks().withFaceDescriptors();
+        if (video && !video.paused && !video.ended && !isSystemLocked) {
+            try {
+                const detections = await faceapi
+                    .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.28 }))
+                    .withFaceLandmarks()
+                    .withFaceDescriptors();
 
-            const resizedDetections = faceapi.resizeResults(detections, displaySize);
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+                const resizedDetections = faceapi.resizeResults(detections, displaySize);
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            const livenessEl = document.getElementById('livenessStatus');
+                const livenessEl = document.getElementById('livenessStatus');
 
-            for (const detection of resizedDetections) {
-                const landmarks = detection.landmarks;
-                const geometryOk = hasValidGeometry(landmarks);
-                const isLive = geometryOk && updateLiveness(detection.detection.box, landmarks);
+                for (const detection of resizedDetections) {
+                    const landmarks = detection.landmarks;
+                    const geometryOk = hasValidGeometry(landmarks);
+                    const isLive = geometryOk && updateLiveness(detection.detection.box, landmarks);
 
-                // 🟢 Render 68-Point Vector Mesh
-                if (landmarks && landmarks.positions) {
-                    const meshColor = isLive ? "rgba(57, 255, 20, 0.7)" : "rgba(239, 68, 68, 0.9)";
-                    ctx.fillStyle = meshColor;
-                    ctx.strokeStyle = meshColor;
-                    ctx.lineWidth = 0.8;
+                    // 🟢 Render 68-Point Vector Mesh
+                    if (landmarks && landmarks.positions) {
+                        const meshColor = isLive ? "rgba(57, 255, 20, 0.7)" : "rgba(239, 68, 68, 0.9)";
+                        ctx.fillStyle = meshColor;
+                        ctx.strokeStyle = meshColor;
+                        ctx.lineWidth = 0.8;
 
-                    const positions = landmarks.positions;
-                    positions.forEach(point => {
-                        ctx.beginPath();
-                        ctx.arc(point.x, point.y, 1.5, 0, 2 * Math.PI);
-                        ctx.fill();
-                    });
-
-                    for (let i = 0; i < positions.length - 1; i++) {
-                        if (i % 3 === 0) {
+                        const positions = landmarks.positions;
+                        positions.forEach(point => {
                             ctx.beginPath();
-                            ctx.moveTo(positions[i].x, positions[i].y);
-                            ctx.lineTo(positions[i + 1].x, positions[i + 1].y);
-                            ctx.stroke();
+                            ctx.arc(point.x, point.y, 1.5, 0, 2 * Math.PI);
+                            ctx.fill();
+                        });
+
+                        for (let i = 0; i < positions.length - 1; i++) {
+                            if (i % 3 === 0) {
+                                ctx.beginPath();
+                                ctx.moveTo(positions[i].x, positions[i].y);
+                                ctx.lineTo(positions[i + 1].x, positions[i + 1].y);
+                                ctx.stroke();
+                            }
+                        }
+                    }
+
+                    // 🚀 Send vector descriptor to Node.js Server Decision Engine
+                    let serverDecision = { decision: 'UNAUTHORIZED', label: 'unknown', distance: '1.00', message: 'Scanning...' };
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/api/biometrics/verify`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                descriptor: Array.from(detection.descriptor),
+                                isLive: isLive
+                            })
+                        });
+                        serverDecision = await response.json();
+                    } catch (e) {
+                        serverDecision = { decision: 'UNAUTHORIZED', label: 'unknown', distance: '-', message: 'Server Offline' };
+                    }
+
+                    // 🎨 Render UI from Server's Strict Decision
+                    let boxColor = "#ef4444";
+                    let statusText = serverDecision.message || `UNAUTHORIZED [${serverDecision.distance}]`;
+
+                    if (!geometryOk) {
+                        boxColor = "#f59e0b";
+                        statusText = "TOO FAR — MOVE CLOSER";
+                    } else if (serverDecision.decision === 'GRANTED') {
+                        boxColor = "#39FF14";
+                        statusText = `VERIFIED: ${serverDecision.label.toUpperCase()} [${serverDecision.distance}]`;
+
+                        if (serverDecision.newlyMarked) {
+                            counts.present++;
+                            if (serverDecision.status === 'Late') counts.late++;
+                            updateStatsUI();
+                            addTableRow(serverDecision.label, serverDecision.time || new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}), serverDecision.status || 'Present');
+                            speak(`Welcome ${serverDecision.label}, entry verified`);
+                        }
+                    } else if (serverDecision.decision === 'SPOOF_BLOCKED') {
+                        boxColor = "#f59e0b";
+                        statusText = `BLINK TO VERIFY: ${serverDecision.label.toUpperCase()} [${serverDecision.distance}]`;
+                    } else if (serverDecision.decision === 'LOCKED') {
+                        boxColor = "#ef4444";
+                        statusText = "🚨 EMERGENCY LOCKDOWN ACTIVE";
+                    } else {
+                        boxColor = "#ef4444";
+                        statusText = `UNAUTHORIZED SUSPECT [${serverDecision.distance}]`;
+                    }
+
+                    const box = detection.detection.box;
+                    ctx.strokeStyle = boxColor;
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+                    const labelY = Math.max(22, box.y);
+                    ctx.fillStyle = boxColor;
+                    ctx.fillRect(box.x, labelY - 22, box.width, 22);
+
+                    ctx.fillStyle = "#000000";
+                    ctx.font = "bold 10px monospace";
+                    ctx.fillText(statusText, box.x + 4, labelY - 6);
+
+                    if (livenessEl) {
+                        livenessEl.innerText = isLive ? "ACTIVE — BLINK VERIFIED" : "SCANNING LIVENESS...";
+                        livenessEl.className = isLive
+                            ? "text-emerald-400 font-bold"
+                            : "text-amber-400 font-bold animate-pulse";
+                    }
+
+                    const nowTime = Date.now();
+                    if (serverDecision.decision === 'UNAUTHORIZED' && geometryOk) {
+                        if (nowTime - lastThreatTime >= 30000) {
+                            lastThreatTime = nowTime;
+                            counts.unknown++;
+                            updateStatsUI();
+
+                            const isSpoof = !isLive;
+                            const threatMsg = isSpoof
+                                ? "SPOOF ATTACK BLOCKED: Photo/Video replay detected (no blink liveness) at Main Gate!"
+                                : "Unauthorized Suspect Scanned at Main Gate!";
+
+                            addTableRow(
+                                isSpoof ? "Spoof Attempt" : "Unknown Suspect",
+                                new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                                "Denied"
+                            );
+                            triggerThreatUI(threatMsg);
                         }
                     }
                 }
-
-                // 🚀 Send vector descriptor to Node.js Server Decision Engine
-                let serverDecision = { decision: 'UNAUTHORIZED', label: 'unknown', distance: '1.00', message: 'Scanning...' };
-                try {
-                    const response = await fetch(`${API_BASE_URL}/api/biometrics/verify`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            descriptor: Array.from(detection.descriptor),
-                            isLive: isLive
-                        })
-                    });
-                    serverDecision = await response.json();
-                } catch (e) {
-                    serverDecision = { decision: 'UNAUTHORIZED', label: 'unknown', distance: '-', message: 'Server Offline' };
-                }
-
-                // 🎨 Render UI from Server's Strict Decision
-                let boxColor = "#ef4444";
-                let statusText = serverDecision.message || `UNAUTHORIZED [${serverDecision.distance}]`;
-
-                if (!geometryOk) {
-                    boxColor = "#f59e0b";
-                    statusText = "TOO FAR — MOVE CLOSER";
-                } else if (serverDecision.decision === 'GRANTED') {
-                    boxColor = "#39FF14";
-                    statusText = `VERIFIED: ${serverDecision.label.toUpperCase()} [${serverDecision.distance}]`;
-
-                    if (serverDecision.newlyMarked) {
-                        counts.present++;
-                        if (serverDecision.status === 'Late') counts.late++;
-                        updateStatsUI();
-                        addTableRow(serverDecision.label, serverDecision.time || new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}), serverDecision.status || 'Present');
-                        speak(`Welcome ${serverDecision.label}, entry verified`);
-                    }
-                } else if (serverDecision.decision === 'SPOOF_BLOCKED') {
-                    boxColor = "#f59e0b";
-                    statusText = `BLINK TO VERIFY: ${serverDecision.label.toUpperCase()} [${serverDecision.distance}]`;
-                } else if (serverDecision.decision === 'LOCKED') {
-                    boxColor = "#ef4444";
-                    statusText = "🚨 EMERGENCY LOCKDOWN ACTIVE";
-                } else {
-                    boxColor = "#ef4444";
-                    statusText = `UNAUTHORIZED SUSPECT [${serverDecision.distance}]`;
-                }
-
-                const box = detection.detection.box;
-                ctx.strokeStyle = boxColor;
-                ctx.lineWidth = 2;
-                ctx.strokeRect(box.x, box.y, box.width, box.height);
-
-                ctx.fillStyle = boxColor;
-                ctx.fillRect(box.x, box.y - 22, box.width, 22);
-
-                ctx.fillStyle = "#000000";
-                ctx.font = "bold 10px monospace";
-                ctx.fillText(statusText, box.x + 4, box.y - 6);
-
-                if (livenessEl) {
-                    livenessEl.innerText = isLive ? "ACTIVE — BLINK VERIFIED" : "SCANNING LIVENESS...";
-                    livenessEl.className = isLive
-                        ? "text-emerald-400 font-bold"
-                        : "text-amber-400 font-bold animate-pulse";
-                }
-
-                const nowTime = Date.now();
-                if (serverDecision.decision === 'UNAUTHORIZED' && geometryOk) {
-                    if (nowTime - lastThreatTime >= 30000) {
-                        lastThreatTime = nowTime;
-                        counts.unknown++;
-                        updateStatsUI();
-
-                        const isSpoof = !isLive;
-                        const threatMsg = isSpoof
-                            ? "SPOOF ATTACK BLOCKED: Photo/Video replay detected (no blink liveness) at Main Gate!"
-                            : "Unauthorized Suspect Scanned at Main Gate!";
-
-                        addTableRow(
-                            isSpoof ? "Spoof Attempt" : "Unknown Suspect",
-                            new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                            "Denied"
-                        );
-                        triggerThreatUI(threatMsg);
-                    }
-                }
+            } catch (e) {
+                console.warn("Inference frame skip:", e);
             }
-        } catch (e) {
-            console.error("Inference loop err:", e);
-        } finally {
-            detecting = false;
         }
-    }, 200);
+
+        if (isLoopRunning) {
+            loopTimeoutId = setTimeout(step, 250);
+        }
+    }
+
+    step();
 }
 
-// 🔊 Audio Voice Synthesis
+// 🔊 Audio Voice Synthesis (Safely Debounced)
+let lastSpokenText = "";
+let lastSpokenTime = 0;
 function speak(text) {
-    if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
+    if (!text || !('speechSynthesis' in window)) return;
+    const now = Date.now();
+    if (text === lastSpokenText && now - lastSpokenTime < 15000) return;
+    if (now - lastSpokenTime < 4000) return;
+
+    lastSpokenText = text;
+    lastSpokenTime = now;
+    try {
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.rate = 1.0;
-        utterance.pitch = 1.0;
         window.speechSynthesis.speak(utterance);
-    }
+    } catch (e) {}
 }
 
 // 📊 Chart.js Live Analytics
