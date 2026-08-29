@@ -6,6 +6,7 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
 const XLSX = require('xlsx');
 require('dotenv').config();
 
@@ -769,6 +770,29 @@ async function handleMessage(msg) {
         console.error('WhatsApp Command Error:', err);
     }
 }
+
+whatsappClient.on('qr', (qr) => {
+    console.log('\n📲 ========================================================');
+    console.log('⚡ SCAN THIS QR CODE WITH WHATSAPP ON YOUR PHONE:');
+    console.log('========================================================\n');
+    qrcode.generate(qr, { small: true });
+});
+
+whatsappClient.on('authenticated', () => {
+    console.log('🔑 WhatsApp Session Authenticated Successfully!');
+});
+
+whatsappClient.on('auth_failure', (msg) => {
+    console.error('❌ WhatsApp Authentication Failed:', msg);
+});
+
+whatsappClient.on('ready', () => {
+    console.log('✅ NexusScan AI WhatsApp Engine is READY and Connected!');
+});
+
+whatsappClient.on('disconnected', (reason) => {
+    console.warn('⚠️ WhatsApp Disconnected:', reason);
+});
 
 whatsappClient.on('message', handleMessage);
 whatsappClient.on('message_create', (msg) => { if (msg.fromMe) handleMessage(msg); });
