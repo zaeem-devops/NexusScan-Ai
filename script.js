@@ -74,6 +74,70 @@ function updateAuthUI(user) {
     if (indicatorEl) {
         indicatorEl.className = user.role === 'admin' ? "w-2 h-2 rounded-full bg-cyan-400" : (user.role === 'faculty' ? "w-2 h-2 rounded-full bg-indigo-400" : "w-2 h-2 rounded-full bg-emerald-400");
     }
+
+    applyRolePermissions(user.role);
+}
+
+// 🛡️ DYNAMIC ROLE-BASED ACCESS CONTROL (RBAC) UI ENGINE
+function applyRolePermissions(role) {
+    if (!role) role = 'guard';
+    const userRole = role.toLowerCase();
+
+    // Select all role-guarded elements
+    const roleElements = document.querySelectorAll('[data-roles]');
+    roleElements.forEach(el => {
+        const rawRoles = el.getAttribute('data-roles') || '';
+        const allowedRoles = rawRoles.split(',').map(r => r.trim().toLowerCase());
+        const isAllowed = allowedRoles.includes(userRole);
+
+        const pill = el.querySelector('.role-pill');
+        let lockBadge = el.querySelector('.lock-badge');
+
+        if (isAllowed) {
+            // ✅ ENABLED: Full interactive state
+            el.classList.remove('opacity-25', 'grayscale', 'cursor-not-allowed', 'pointer-events-none');
+            el.removeAttribute('disabled');
+            el.removeAttribute('title');
+            if (el.tagName === 'A') el.style.pointerEvents = 'auto';
+
+            if (pill) pill.classList.remove('hidden');
+            if (lockBadge) lockBadge.remove();
+        } else {
+            // ⛔ DISABLED: Visually locked and non-interactive
+            el.classList.add('opacity-25', 'grayscale', 'cursor-not-allowed', 'pointer-events-none');
+            el.setAttribute('disabled', 'true');
+            el.setAttribute('title', `🔒 Restricted: Requires [${allowedRoles.join('/')}] permissions`);
+            if (el.tagName === 'A') el.style.pointerEvents = 'none';
+
+            if (pill) pill.classList.add('hidden');
+            if (!lockBadge) {
+                lockBadge = document.createElement('span');
+                lockBadge.className = 'lock-badge text-[9px] bg-slate-900 border border-slate-700 text-slate-500 px-1 py-0.5 rounded font-mono';
+                lockBadge.innerText = '🔒 LOCKED';
+                el.appendChild(lockBadge);
+            }
+        }
+    });
+
+    // Faculty Controls Sidebar Section
+    const facultySection = document.getElementById('facultySection');
+    if (facultySection) {
+        if (['faculty', 'admin'].includes(userRole)) {
+            facultySection.classList.remove('hidden');
+        } else {
+            facultySection.classList.add('hidden');
+        }
+    }
+
+    // Top Header Navigation Tabs
+    const navFaculty = document.getElementById('navFacultyView');
+    if (navFaculty) {
+        if (['faculty', 'admin'].includes(userRole)) {
+            navFaculty.classList.remove('hidden');
+        } else {
+            navFaculty.classList.add('hidden');
+        }
+    }
 }
 
 async function handleLoginSubmit(event) {
@@ -228,8 +292,8 @@ function startSecondaryCamera() {
 // 📸 Server-Side Biometric Enrollment
 // ============================================================
 async function enrollNewFace() {
-    if (!currentUser || !['admin', 'guard'].includes(currentUser.role)) {
-        showToast("Access Denied: Only Guards or Admins can enroll faces.", "error");
+    if (!currentUser || currentUser.role !== 'admin') {
+        showToast("⛔ Access Denied: Admin role required for Biometric Enrollment.", "error");
         return;
     }
 
@@ -643,6 +707,10 @@ function triggerThreatUI(message, snapshot = null) {
 }
 
 function triggerEmergencyAlert() {
+    if (!currentUser || !['guard', 'admin'].includes(currentUser.role)) {
+        showToast("⛔ Access Denied: Guard or Admin role required for Emergency Alert.", "error");
+        return;
+    }
     if (confirm("DANGER: Trigger Campus Emergency WhatsApp Red Alert?")) {
         triggerThreatUI("PANIC BUTTON TRIGGERED BY OPERATOR", captureThreatSnapshot());
         showToast("Emergency WhatsApp Broadcast Fired!", "error");
@@ -672,6 +740,10 @@ async function restoreLogsFromServer() {
 
 // 🎫 Gate Pass Verification
 function openPassModal() {
+    if (!currentUser || !['guard', 'admin'].includes(currentUser.role)) {
+        showToast("⛔ Access Denied: Guard or Admin role required.", "error");
+        return;
+    }
     const modal = document.getElementById('passModal');
     const result = document.getElementById('passResult');
     const input = document.getElementById('passCodeInput');
@@ -721,6 +793,10 @@ async function verifyGatePass(event) {
 
 // 👤 Visitor Request Modal
 function openVisitorModal() {
+    if (!currentUser || !['guard', 'admin'].includes(currentUser.role)) {
+        showToast("⛔ Access Denied: Guard or Admin role required.", "error");
+        return;
+    }
     const modal = document.getElementById('visitorModal');
     if (modal) modal.classList.remove('hidden');
 }
@@ -764,6 +840,10 @@ async function sendVisitorRequest(event) {
 
 // ⌨️ Manual & Leave Entries
 function manualEntry() {
+    if (!currentUser || !['guard', 'admin'].includes(currentUser.role)) {
+        showToast("⛔ Access Denied: Guard or Admin role required.", "error");
+        return;
+    }
     const name = prompt("Enter Person Name for Manual Entry:");
     if (name && name.trim() !== "") {
         const studentName = name.trim();
@@ -782,6 +862,10 @@ function manualEntry() {
 }
 
 function markLeaveEntry() {
+    if (!currentUser || currentUser.role !== 'admin') {
+        showToast("⛔ Access Denied: Admin role required to Mark Leave.", "error");
+        return;
+    }
     const name = prompt("Enter Person Name for Leave:");
     if (name && name.trim() !== "") {
         const studentName = name.trim();
@@ -798,6 +882,10 @@ function markLeaveEntry() {
 }
 
 function clearDatabase() {
+    if (!currentUser || currentUser.role !== 'admin') {
+        showToast("⛔ Access Denied: Admin role required to Clear Logs.", "error");
+        return;
+    }
     if (confirm("Are you sure you want to clear session logs?")) {
         const logContainer = document.getElementById('attendanceBody');
         if (logContainer) logContainer.innerHTML = "";
