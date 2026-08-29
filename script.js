@@ -40,6 +40,7 @@ async function initAuth() {
             currentUser = data.user;
             updateAuthUI(data.user);
             if (overlay) overlay.classList.add('hidden');
+            startApp();
             return true;
         } else {
             sessionStorage.removeItem('nexus_token');
@@ -52,6 +53,7 @@ async function initAuth() {
             currentUser = JSON.parse(saved);
             updateAuthUI(currentUser);
             if (overlay) overlay.classList.add('hidden');
+            startApp();
             return true;
         }
         if (overlay) overlay.classList.remove('hidden');
@@ -838,47 +840,97 @@ async function sendVisitorRequest(event) {
     }
 }
 
-// ⌨️ Manual & Leave Entries
-function manualEntry() {
+// ⌨️ Manual Attendance Modal Handlers
+function openManualModal() {
     if (!currentUser || !['guard', 'admin'].includes(currentUser.role)) {
         showToast("⛔ Access Denied: Guard or Admin role required.", "error");
         return;
     }
-    const name = prompt("Enter Person Name for Manual Entry:");
-    if (name && name.trim() !== "") {
-        const studentName = name.trim();
-        const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        counts.present++;
-        updateStatsUI();
-        addTableRow(studentName, timeString, "Present");
-        showToast(`${studentName} marked Present (Manual)`, "success");
+    const modal = document.getElementById('manualModal');
+    const input = document.getElementById('manualPersonName');
+    if (input) input.value = "";
+    if (modal) modal.classList.remove('hidden');
+}
 
-        fetch(`${API_BASE_URL}/api/attendance`, {
+function closeManualModal() {
+    const modal = document.getElementById('manualModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+async function submitManualEntry(event) {
+    if (event) event.preventDefault();
+    const nameInput = document.getElementById('manualPersonName');
+    const statusInput = document.getElementById('manualPersonStatus');
+    const studentName = (nameInput?.value || '').trim();
+    const statusType = statusInput?.value || 'Present';
+
+    if (!studentName) return;
+
+    const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    counts.present++;
+    if (statusType === 'Late') counts.late++;
+    updateStatsUI();
+    addTableRow(studentName, timeString, statusType);
+    showToast(`${studentName} marked ${statusType} (Manual)`, "success");
+    closeManualModal();
+
+    try {
+        await fetch(`${API_BASE_URL}/api/attendance`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: studentName, status: 'Present', time: timeString })
-        }).catch(() => {});
+            body: JSON.stringify({ name: studentName, status: statusType, time: timeString })
+        });
+    } catch (e) {
+        console.warn("Could not sync attendance to server:", e);
     }
 }
 
-function markLeaveEntry() {
+// 🏖️ Mark Leave Modal Handlers
+function openLeaveModal() {
     if (!currentUser || currentUser.role !== 'admin') {
         showToast("⛔ Access Denied: Admin role required to Mark Leave.", "error");
         return;
     }
-    const name = prompt("Enter Person Name for Leave:");
-    if (name && name.trim() !== "") {
-        const studentName = name.trim();
-        const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        addTableRow(studentName, timeString, "Leave");
-        showToast(`${studentName} marked on Leave`, "warning");
+    const modal = document.getElementById('leaveModal');
+    const input = document.getElementById('leavePersonName');
+    if (input) input.value = "";
+    if (modal) modal.classList.remove('hidden');
+}
 
-        fetch(`${API_BASE_URL}/api/attendance`, {
+function closeLeaveModal() {
+    const modal = document.getElementById('leaveModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+async function submitLeaveEntry(event) {
+    if (event) event.preventDefault();
+    const nameInput = document.getElementById('leavePersonName');
+    const studentName = (nameInput?.value || '').trim();
+
+    if (!studentName) return;
+
+    const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    addTableRow(studentName, timeString, "Leave");
+    showToast(`${studentName} marked on Leave`, "warning");
+    closeLeaveModal();
+
+    try {
+        await fetch(`${API_BASE_URL}/api/attendance`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name: studentName, status: 'Leave', time: timeString })
-        }).catch(() => {});
+        });
+    } catch (e) {
+        console.warn("Could not sync leave to server:", e);
     }
+}
+
+function manualEntry() {
+    openManualModal();
+}
+
+function markLeaveEntry() {
+    openLeaveModal();
 }
 
 function clearDatabase() {
