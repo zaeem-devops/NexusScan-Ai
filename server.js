@@ -570,6 +570,21 @@ async function handleMessage(msg) {
                     `📌 Status: Valid for Today (single entry)\n` +
                     `Show this code to Main Gate Security Guard for verification.`;
                 await msg.reply(approvalMsg);
+
+                // --- NEW: SEND TO GUARD'S PHONE AUTOMATICALLY ---
+                const guardNumber = formatWhatsAppNumber(SECURITY_PHONE);
+                const hostNumber = String(msg.from).replace('@c.us', '');
+                const guardAlertMsg = `🛂 *GATE ALERT: Visitor Approved*\n\n` +
+                    `👤 *Visitor:* ${pending.visitorName}\n` +
+                    `🪪 *Pass Code:* ${passCode}\n` +
+                    `📱 *Approved By:* ${hostNumber}\n\n` +
+                    `Please allow entry.`;
+                
+                if (whatsappClient.info && msg.from !== guardNumber) {
+                    await whatsappClient.sendMessage(guardNumber, guardAlertMsg);
+                }
+                // ------------------------------------------------
+
                 console.log(`✅ Visitor ${pending.visitorName} approved by ${msg.from} — Pass ${passCode}`);
             } else {
                 await updateVisitorPass(pending._id, { status: 'rejected' });
