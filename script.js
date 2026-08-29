@@ -6,6 +6,8 @@ let lastAnnouncement = "";
 let currentUser = null;
 let statsChartInstance = null;
 let detecting = false;
+let isAppStarted = false;
+let detectionInterval = null;
 
 // API Base URL
 const API_BASE_URL = 'http://127.0.0.1:3000';
@@ -196,6 +198,11 @@ async function performLogin(username, password, errEl) {
 }
 
 function logoutUser() {
+    isAppStarted = false;
+    if (detectionInterval) {
+        clearInterval(detectionInterval);
+        detectionInterval = null;
+    }
     sessionStorage.removeItem('nexus_token');
     sessionStorage.removeItem('nexus_user');
     currentUser = null;
@@ -208,6 +215,9 @@ function logoutUser() {
 // 🚀 Core App Initializer
 // ============================================================
 async function startApp() {
+    if (isAppStarted) return;
+    isAppStarted = true;
+
     await startVideo();
     startSecondaryCamera();
 
@@ -426,17 +436,32 @@ function updateLiveness(box, landmarks) {
 // 🛡️ SERVER-DRIVEN FACE DETECTION & DECISION LOOP
 // ============================================================
 function detectFaces() {
-    const container = document.getElementById('cameraContainer');
+    if (detectionInterval) {
+        clearInterval(detectionInterval);
+        detectionInterval = null;
+    }
+
+    const container = document.querySelector('.video-container') || document.querySelector('.scanner-wrapper') || document.getElementById('cameraContainer');
     const existingCanvas = container?.querySelector('canvas');
     if (existingCanvas) existingCanvas.remove();
 
+    if (!video) return;
     const canvas = faceapi.createCanvasFromMedia(video);
-    if (container) container.append(canvas);
+    if (container) {
+        container.style.position = 'relative';
+        canvas.style.position = 'absolute';
+        canvas.style.top = '0';
+        canvas.style.left = '0';
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
+        canvas.style.pointerEvents = 'none';
+        container.append(canvas);
+    }
 
     const displaySize = { width: video.offsetWidth || 640, height: video.offsetHeight || 480 };
     faceapi.matchDimensions(canvas, displaySize);
 
-    setInterval(async () => {
+    detectionInterval = setInterval(async () => {
         if (detecting) return;
         detecting = true;
         try {
