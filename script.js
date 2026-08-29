@@ -8,6 +8,8 @@ let statsChartInstance = null;
 let detecting = false;
 let isAppStarted = false;
 let detectionInterval = null;
+let lastThreatTime = 0;
+let previousLockState = null;
 
 // API Base URL
 const API_BASE_URL = 'http://127.0.0.1:3000';
@@ -572,23 +574,25 @@ function detectFaces() {
                         : "text-amber-400 font-bold animate-pulse";
                 }
 
-                if (serverDecision.decision === 'UNAUTHORIZED' && geometryOk && !unknownDetected) {
-                    counts.unknown++;
-                    updateStatsUI();
-                    unknownDetected = true;
+                const nowTime = Date.now();
+                if (serverDecision.decision === 'UNAUTHORIZED' && geometryOk) {
+                    if (nowTime - lastThreatTime >= 30000) {
+                        lastThreatTime = nowTime;
+                        counts.unknown++;
+                        updateStatsUI();
 
-                    const isSpoof = !isLive;
-                    const threatMsg = isSpoof
-                        ? "SPOOF ATTACK BLOCKED: Photo/Video replay detected (no blink liveness) at Main Gate!"
-                        : "Unauthorized Suspect Scanned at Main Gate!";
+                        const isSpoof = !isLive;
+                        const threatMsg = isSpoof
+                            ? "SPOOF ATTACK BLOCKED: Photo/Video replay detected (no blink liveness) at Main Gate!"
+                            : "Unauthorized Suspect Scanned at Main Gate!";
 
-                    addTableRow(
-                        isSpoof ? "Spoof Attempt" : "Unknown Suspect",
-                        new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                        "Denied"
-                    );
-                    triggerThreatUI(threatMsg, captureThreatSnapshot());
-                    setTimeout(() => { unknownDetected = false; }, 30000);
+                        addTableRow(
+                            isSpoof ? "Spoof Attempt" : "Unknown Suspect",
+                            new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                            "Denied"
+                        );
+                        triggerThreatUI(threatMsg);
+                    }
                 }
             }
         } catch (e) {
@@ -723,14 +727,16 @@ function triggerThreatUI(message, snapshot = null) {
         details.innerText = message;
         banner.classList.remove('hidden');
         speak("Security Alert! Unauthorized Person Detected");
-        setTimeout(() => banner.classList.add('hidden'), 6000);
+        setTimeout(() => {
+            if (banner) banner.classList.add('hidden');
+        }, 5000);
     }
 
     fetch(`${API_BASE_URL}/api/threat-alert`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: message, snapshot })
-    }).catch(() => {});
+    }).catch(e => console.warn("Threat dispatch warning:", e));
 }
 
 function triggerEmergencyAlert() {
@@ -1115,17 +1121,19 @@ setInterval(async () => {
         const response = await fetch(`${API_BASE_URL}/api/system-status`);
         const data = await response.json();
 
-        const videoOverlay = document.getElementById('video');
-        const statusEl = document.getElementById('systemStatus');
+        if (data.locked !== previousLockState) {
+            previousLockState = data.locked;
+            isSystemLocked = data.locked;
+            const videoOverlay = document.getElementById('video');
+            const statusEl = document.getElementById('systemStatus');
 
-        isSystemLocked = data.locked;
-
-        if (isSystemLocked) {
-            if (videoOverlay) videoOverlay.style.filter = "grayscale(100%) brightness(20%)";
-            if (statusEl) statusEl.innerText = "🚨 LOCKDOWN MODE (Remote Override)";
-        } else {
-            if (videoOverlay) videoOverlay.style.filter = "none";
-            if (statusEl && statusEl.innerText.includes("LOCKDOWN")) statusEl.innerText = "Server Decision Engine: ACTIVE";
+            if (isSystemLocked) {
+                if (videoOverlay) videoOverlay.style.opacity = "0.25";
+                if (statusEl) statusEl.innerText = "🚨 LOCKDOWN MODE (Remote Override)";
+            } else {
+                if (videoOverlay) videoOverlay.style.opacity = "1";
+                if (statusEl) statusEl.innerText = "Server Decision Engine: ACTIVE";
+            }
         }
 
         if (data.announcement && data.announcement !== lastAnnouncement) {
@@ -1135,7 +1143,7 @@ setInterval(async () => {
         }
         if (!data.announcement) lastAnnouncement = "";
     } catch (e) { }
-}, 1500);
+}, 3000);
 
 // Kickoff
 if (typeof lucide !== 'undefined') lucide.createIcons();
