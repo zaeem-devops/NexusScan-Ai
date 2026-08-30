@@ -2,15 +2,13 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const XLSX = require('xlsx');
 require('dotenv').config();
 
-// 🤖 Gemini AI Integration (100% Free / Optional)
+// 🤖 Gemini AI Integration
 let geminiModel = null;
 try {
     const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -36,193 +34,173 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'nexus_scan_ai_secret_key_production_2026';
 
 // 🔐 Configuration (see .env.example)
 const SECURITY_PHONE = process.env.SECURITY_PHONE || '03236404459';
-const GUARD_PHONE = process.env.GUARD_PHONE || SECURITY_PHONE;  // Guard gets visitor alerts
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+// Comma-separated WhatsApp numbers allowed to send LOCK/UNLOCK/STATUS/ANNOUNCE.
+// Leave empty ONLY for demo — otherwise anyone who messages this number can lock the system.
 const ADMIN_WHITELIST = (process.env.ADMIN_WHITELIST || '')
     .split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean)
-    .map(d => d.startsWith('03') ? '92' + d.substring(1) : d);
+    .map(d => d.startsWith('03') ? '92' + d.substring(1) : d); // normalize 03xx → 92xx
 
 // 🔒 Global Security State
 let isSystemLocked = false;
 let currentAnnouncement = "";
 
-// 🛡️ Anti-Spam Cooldown for WhatsApp Alerts (prevents message flooding)
-const THREAT_COOLDOWN_MS = 30000;     // 30 seconds between threat alerts
-const ATTENDANCE_COOLDOWN_MS = 5000;  // 5 seconds between attendance alerts for same person
-let lastThreatAlertTime = 0;
-let lastAttendanceAlerts = {};        // { "name": timestamp }
-
 // ============================================================
-// 🗄️ NeDB — File-Based Persistent Database (No Installation Needed)
-// Data saves permanently in /data/*.db files
+// 🗄️ MongoDB Models + Hybrid Memory Fallback
 // ============================================================
-const Datastore = require('@seald-io/nedb');
+const AttendanceSchema = new mongoose.Schema({
+    name: String,
+    status: String,           // Present | Late | Leave | Denied
+    time: String,
+    date: { type: String, default: () => new Date().toDateString() },
+    createdAt: { type: Date, default: Date.now }
+});
 
-const dataDir = path.join(__dirname, 'data');
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+const VisitorPassSchema = new mongoose.Schema({
+    visitorName: String,
+    cnic: String,
+    hostPhone: String,
+    purpose: String,
+    status: { type: String, default: 'pending' },   // pending | approved | rejected
+    passCode: String,                                // NX-XXXX, set on approval
+    usedAt: Date,
+    createdAt: { type: Date, default: Date.now }
+});
 
-// 📁 Separate .db file for each collection — permanent on disk
-const db = {
-    users:      new Datastore({ filename: path.join(dataDir, 'users.db'),      autoload: true }),
-    biometrics: new Datastore({ filename: path.join(dataDir, 'biometrics.db'), autoload: true }),
-    attendance: new Datastore({ filename: path.join(dataDir, 'attendance.db'), autoload: true }),
-    passes:     new Datastore({ filename: path.join(dataDir, 'passes.db'),     autoload: true }),
-    threats:    new Datastore({ filename: path.join(dataDir, 'threats.db'),    autoload: true }),
-};
+const ThreatSchema = new mongoose.Schema({
+    reason: String,
+    hasSnapshot: { type: Boolean, default: false },
+    createdAt: { type: Date, default: Date.now }
+});
 
-// Unique indexes
-db.users.ensureIndex({ fieldName: 'username', unique: true });
-db.biometrics.ensureIndex({ fieldName: 'name', unique: true });
+const Attendance = mongoose.model('Attendance', AttendanceSchema);
+const VisitorPass = mongoose.model('VisitorPass', VisitorPassSchema);
+const Threat = mongoose.model('Threat', ThreatSchema);
 
-console.log('✅ NeDB File Database Loaded — Data saves permanently in /data/ folder.');
+// In-memory fallback when MongoDB is unavailable (Hybrid Memory Mode)
+const memoryStore = { attendance: [], passes: [], threats: [] };
+let mongoReady = false;
 
-// ============================================================
-// 🔐 Seed Default Users (only if not already in DB)
-// ============================================================
-async function seedDefaultUsers() {
-    const defaultAccounts = [
-        { username: 'admin',   password: process.env.ADMIN_PASSWORD   || 'admin123',   role: 'admin',   name: 'Chief Security Officer' },
-        { username: 'guard',   password: process.env.GUARD_PASSWORD   || 'guard123',   role: 'guard',   name: 'Main Gate Officer'      },
-        { username: 'faculty', password: process.env.FACULTY_PASSWORD || 'faculty123', role: 'faculty', name: 'Department Faculty'      }
-    ];
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/nexusScanAI';
 
-    for (const acc of defaultAccounts) {
-        const existing = await db.users.findOneAsync({ username: acc.username });
-        if (!existing) {
-            const hash = await bcrypt.hash(acc.password, 10);
-            await db.users.insertAsync({
-                username:     acc.username,
-                passwordHash: hash,
-                role:         acc.role,
-                name:         acc.name,
-                phone:        '',
-                createdAt:    new Date()
-            });
-            console.log(`👤 Default user created: ${acc.username} (${acc.role})`);
-        }
-    }
-    console.log('🔐 RBAC System Active — Default accounts ready (admin, guard, faculty).');
-}
-seedDefaultUsers();
+mongoose.connect(MONGO_URI)
+    .then(() => { mongoReady = true; console.log('✅ MongoDB Connected Successfully!'); })
+    .catch(() => console.log('⚠️ Local MongoDB not detected! Running server in Hybrid Memory Mode.'));
 
-// ============================================================
-// 🔑 JWT Middleware
-// ============================================================
-function authenticateJWT(req, res, next) {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
-    if (!token) return res.status(401).json({ success: false, error: 'Unauthorized: Token required.' });
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) return res.status(403).json({ success: false, error: 'Forbidden: Invalid or expired token.' });
-        req.user = user;
-        next();
-    });
-}
-
-function requireRole(allowedRoles = []) {
-    return (req, res, next) => {
-        if (!req.user || !allowedRoles.includes(req.user.role)) {
-            return res.status(403).json({ success: false, error: `Access Denied: Required role [${allowedRoles.join(', ')}]` });
-        }
-        next();
-    };
-}
-
-// ============================================================
-// 🗃️ Database Helper Functions
-// ============================================================
+// Storage helpers — Mongo when connected, memory otherwise
 async function saveAttendance(record) {
-    record.date      = record.date || new Date().toDateString();
-    record.createdAt = new Date();
-    return db.attendance.insertAsync(record);
+    if (mongoReady) { await Attendance.create(record); return; }
+    record.date = record.date || new Date().toDateString();
+    memoryStore.attendance.push({ ...record, createdAt: new Date() });
 }
 
 async function findAttendanceToday(name) {
     const today = new Date().toDateString();
-    return db.attendance.findOneAsync({ name, date: today, status: { $in: ['Present', 'Late'] } });
+    if (mongoReady) {
+        return Attendance.findOne({ name, date: today, status: { $in: ['Present', 'Late'] } });
+    }
+    return memoryStore.attendance.find(r => r.name === name && r.date === today && ['Present', 'Late'].includes(r.status));
 }
 
 async function getAllAttendance() {
-    const records = await db.attendance.findAsync({});
-    return records.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 500);
+    if (mongoReady) return Attendance.find().sort({ createdAt: -1 }).limit(500);
+    return [...memoryStore.attendance].reverse();
 }
 
 async function saveVisitorPass(doc) {
-    doc.createdAt = new Date();
-    return db.passes.insertAsync(doc);
+    if (mongoReady) return VisitorPass.create(doc);
+    const copy = { ...doc, createdAt: new Date() };
+    memoryStore.passes.push(copy);
+    return copy;
 }
 
 async function updateVisitorPass(id, patch) {
-    await db.passes.updateAsync({ _id: id }, { $set: patch });
-    return db.passes.findOneAsync({ _id: id });
+    if (mongoReady) return VisitorPass.findByIdAndUpdate(id, patch, { new: true });
+    const doc = memoryStore.passes.find(p => String(p._id || p.id) === String(id));
+    if (doc) Object.assign(doc, patch);
+    return doc;
 }
 
 async function findPendingPassForHost(hostPhone) {
-    const passes = await db.passes.findAsync({ hostPhone, status: 'pending' });
-    return passes.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+    if (mongoReady) {
+        return VisitorPass.findOne({ hostPhone, status: 'pending' }).sort({ createdAt: -1 });
+    }
+    return [...memoryStore.passes].reverse()
+        .find(p => p.hostPhone === hostPhone && p.status === 'pending');
 }
 
 async function findPassByCode(passCode) {
-    return db.passes.findOneAsync({ passCode });
+    if (mongoReady) return VisitorPass.findOne({ passCode });
+    return memoryStore.passes.find(p => p.passCode === passCode);
 }
 
 async function saveThreat(doc) {
-    doc.createdAt = new Date();
-    return db.threats.insertAsync(doc);
+    if (mongoReady) { await Threat.create(doc); return; }
+    memoryStore.threats.push({ ...doc, createdAt: new Date() });
 }
 
 async function countThreatsToday() {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-    const threats = await db.threats.findAsync({ createdAt: { $gte: startOfDay } });
-    return threats.length;
-}
-
-async function getAllBiometrics() {
-    return db.biometrics.findAsync({});
-}
-
-async function saveBiometric(name, descriptors, role = 'Student') {
-    const existing = await db.biometrics.findOneAsync({ name: { $regex: new RegExp(`^${name}$`, 'i') } });
-    const doc = { name, descriptors, role, samplesCount: descriptors.length, updatedAt: new Date() };
-    if (existing) {
-        await db.biometrics.updateAsync({ _id: existing._id }, { $set: doc });
-        return { ...existing, ...doc };
-    } else {
-        doc.createdAt = new Date();
-        return db.biometrics.insertAsync(doc);
+    const today = new Date().toDateString();
+    if (mongoReady) {
+        return Threat.countDocuments({ createdAt: { $gte: new Date(new Date().setHours(0, 0, 0, 0)) } });
     }
+    return memoryStore.threats.filter(t => new Date(t.createdAt).toDateString() === today).length;
 }
 
-function euclideanDistance(d1, d2) {
-    if (!d1 || !d2 || d1.length !== d2.length) return 1.0;
-    let sum = 0.0;
-    for (let i = 0; i < d1.length; i++) { const diff = d1[i] - d2[i]; sum += diff * diff; }
-    return Math.sqrt(sum);
-}
-
+// ============================================================
+// 📱 WhatsApp Engine
+// ============================================================
 const whatsappClient = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        executablePath: process.env.CHROME_PATH || undefined,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--disable-gpu',
+            '--disable-extensions',
+            '--disable-component-update',
+            '--unhandled-rejections=strict'
+        ]
+    }
+});
+
+whatsappClient.on('qr', (qr) => {
+    console.log('⚠️ SCAN THIS QR CODE WITH UNIVERSITY WHATSAPP PHONE:');
+    qrcode.generate(qr, { small: true });
+});
+
+whatsappClient.on('ready', () => {
+    console.log('✅ NexusScan AI WhatsApp Engine is READY and Authenticated!');
+    if (!ADMIN_WHITELIST.length) {
+        console.log('⚠️ WARNING: ADMIN_WHITELIST is empty — ANY WhatsApp number can send LOCK/UNLOCK commands!');
     }
 });
 
 function formatWhatsAppNumber(phone) {
     let cleaned = String(phone).replace(/\D/g, '');
-    if (cleaned.startsWith('03')) cleaned = '92' + cleaned.substring(1);
+    if (cleaned.startsWith('03')) {
+        cleaned = '92' + cleaned.substring(1);
+    }
     return cleaned.endsWith('@c.us') ? cleaned : `${cleaned}@c.us`;
 }
 
 function isAdminChat(chatId) {
     const digits = String(chatId).replace(/\D/g, '');
-    const ownId = whatsappClient.info && whatsappClient.info.wid ? String(whatsappClient.info.wid._serialized).replace(/\D/g, '') : '';
+    // The connected account always controls itself (self-sent commands)
+    const ownId = whatsappClient.info && whatsappClient.info.wid
+        ? String(whatsappClient.info.wid._serialized).replace(/\D/g, '')
+        : '';
     if (ownId && digits.startsWith(ownId)) return true;
-    if (!ADMIN_WHITELIST.length) return true;
+    if (!ADMIN_WHITELIST.length) return true; // demo mode — set ADMIN_WHITELIST in .env for real security
     return ADMIN_WHITELIST.some(admin => digits.startsWith(admin));
 }
 
@@ -230,180 +208,16 @@ function isAdminChat(chatId) {
 // 📩 API Endpoints
 // ============================================================
 
-// 🔑 RBAC Login Endpoint
-app.post('/api/auth/login', async (req, res) => {
-    try {
-        const { username, password } = req.body || {};
-        if (!username || !password) {
-            return res.status(400).json({ success: false, error: 'Username and password required.' });
-        }
-
-        let user = await db.users.findOneAsync({ username: username.toLowerCase().trim() });
-
-        if (!user) {
-            return res.status(401).json({ success: false, error: 'Invalid username or password.' });
-        }
-
-        const validPassword = await bcrypt.compare(password, user.passwordHash);
-        if (!validPassword) {
-            return res.status(401).json({ success: false, error: 'Invalid username or password.' });
-        }
-
-        const token = jwt.sign(
-            { id: user._id || user.username, username: user.username, role: user.role, name: user.name },
-            JWT_SECRET,
-            { expiresIn: '24h' }
-        );
-
-        return res.json({
-            success: true,
-            token,
-            user: { username: user.username, role: user.role, name: user.name }
-        });
-    } catch (err) {
-        console.error('Login Error:', err);
-        return res.status(500).json({ success: false, error: err.message });
+// 🔑 Faculty / Admin Login
+app.post('/api/auth', (req, res) => {
+    const { password } = req.body || {};
+    if (password === ADMIN_PASSWORD) {
+        return res.json({ success: true, token: Buffer.from(`nx-${Date.now()}`).toString('base64') });
     }
+    return res.status(401).json({ success: false, error: 'Access Denied!' });
 });
 
-// 🔑 Get Current Authenticated User
-app.get('/api/auth/me', authenticateJWT, (req, res) => {
-    return res.json({ success: true, user: req.user });
-});
-
-// 📸 Server-Side Biometric Enrollment
-app.post('/api/biometrics/enroll', authenticateJWT, requireRole(['admin', 'guard']), async (req, res) => {
-    try {
-        const { name, role, descriptors } = req.body || {};
-        if (!name || !descriptors || !Array.isArray(descriptors) || descriptors.length === 0) {
-            return res.status(400).json({ success: false, error: 'Name and biometric samples required.' });
-        }
-
-        const saved = await saveBiometric(name.trim(), descriptors, role || 'Student');
-        console.log(`👤 Biometric Enrolled: ${name} with ${descriptors.length} sample vectors.`);
-        return res.json({
-            success: true,
-            message: `Biometric for ${name} stored securely on server.`,
-            enrolledCount: saved.samplesCount
-        });
-    } catch (err) {
-        console.error('Enrollment Error:', err);
-        return res.status(500).json({ success: false, error: err.message });
-    }
-});
-
-// 📋 List Enrolled Biometrics
-app.get('/api/biometrics/list', async (req, res) => {
-    try {
-        const biometrics = await getAllBiometrics();
-        const names = biometrics.map(b => ({ name: b.name, role: b.role, samples: b.samplesCount }));
-        return res.json({ success: true, biometrics: names, count: names.length });
-    } catch (err) {
-        return res.status(500).json({ success: false, error: err.message });
-    }
-});
-
-// 🛡️ SERVER-SIDE DECISION ENGINE: Verify Face & Make Access Control Decision
-app.post('/api/biometrics/verify', async (req, res) => {
-    try {
-        if (isSystemLocked) {
-            return res.json({
-                decision: 'LOCKED',
-                label: 'SYSTEM LOCKED',
-                message: '🚨 Emergency Lockdown Active. Scanner Disabled.',
-                matched: false
-            });
-        }
-
-        const { descriptor, isLive, snapshot } = req.body || {};
-        if (!descriptor || !Array.isArray(descriptor) || descriptor.length !== 128) {
-            return res.status(400).json({ success: false, error: 'Valid 128-dimensional descriptor vector required.' });
-        }
-
-        const allBiometrics = await getAllBiometrics();
-
-        let bestMatch = { label: 'unknown', distance: 1.0 };
-        const MATCH_THRESHOLD = 0.50;
-
-        for (const bio of allBiometrics) {
-            for (const storedDesc of bio.descriptors) {
-                const dist = euclideanDistance(descriptor, storedDesc);
-                if (dist < bestMatch.distance) {
-                    bestMatch = { label: bio.name, distance: dist, role: bio.role };
-                }
-            }
-        }
-
-        const distanceStr = bestMatch.distance.toFixed(2);
-
-        // Case 1: Unknown Suspect
-        if (bestMatch.distance >= MATCH_THRESHOLD || bestMatch.label === 'unknown') {
-            return res.json({
-                decision: 'UNAUTHORIZED',
-                matched: false,
-                label: 'unknown',
-                distance: distanceStr,
-                message: `Unauthorized Suspect [${distanceStr}]`
-            });
-        }
-
-        // Case 2: Spoof Attempt (Photo/Video Attack)
-        if (!isLive) {
-            return res.json({
-                decision: 'SPOOF_BLOCKED',
-                matched: false,
-                label: bestMatch.label,
-                distance: distanceStr,
-                message: `BLINK TO VERIFY: ${bestMatch.label.toUpperCase()} [${distanceStr}]`
-            });
-        }
-
-        // Case 3: Fully Verified Live Person -> Process Access & Log Attendance on Server
-        const now = new Date();
-        const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        const isLate = now.getHours() >= 9;
-        const statusType = isLate ? 'Late' : 'Present';
-
-        const alreadyMarked = await findAttendanceToday(bestMatch.label);
-        let newlyMarked = false;
-
-        if (!alreadyMarked) {
-            newlyMarked = true;
-            await saveAttendance({
-                name: bestMatch.label,
-                status: statusType,
-                time: timeString
-            });
-
-            // Dispatch WhatsApp Alert on Server
-            const recipientPhone = formatWhatsAppNumber(SECURITY_PHONE);
-            const statusMsg = `📋 *NexusScan Attendance Alert*\n\n` +
-                `👤 *Name:* ${bestMatch.label}\n` +
-                `📌 *Status:* ${statusType.toUpperCase()}\n` +
-                `⏰ *Time:* ${timeString}`;
-
-            if (whatsappClient.info) {
-                whatsappClient.sendMessage(recipientPhone, statusMsg).catch(e => console.error('WA err:', e.message));
-            }
-        }
-
-        return res.json({
-            decision: 'GRANTED',
-            matched: true,
-            label: bestMatch.label,
-            distance: distanceStr,
-            status: statusType,
-            time: timeString,
-            newlyMarked,
-            message: `VERIFIED: ${bestMatch.label.toUpperCase()} [${distanceStr}]`
-        });
-    } catch (err) {
-        console.error('Verification Error:', err);
-        return res.status(500).json({ success: false, error: err.message });
-    }
-});
-
-// 📩 Smart Visitor Approval Endpoint
+// 📩 Smart Visitor Approval Endpoint (request now persisted for reply mapping)
 app.post('/api/visitor-request', async (req, res) => {
     try {
         const { visitorName, cnic, hostPhone, purpose } = req.body || {};
@@ -428,6 +242,7 @@ app.post('/api/visitor-request', async (req, res) => {
         if (whatsappClient.info) {
             await whatsappClient.sendMessage(formattedPhone, msg);
         }
+        console.log(`📩 Visitor request sent to ${formattedPhone}`);
 
         return res.status(200).json({
             success: true,
@@ -439,7 +254,7 @@ app.post('/api/visitor-request', async (req, res) => {
     }
 });
 
-// 🎫 Gate Pass Verification
+// 🎫 Gate Pass Verification (guard enters NX-XXXX at gate)
 app.post('/api/verify-pass', async (req, res) => {
     try {
         const passCode = String((req.body || {}).passCode || '').trim().toUpperCase();
@@ -473,7 +288,7 @@ app.post('/api/verify-pass', async (req, res) => {
     }
 });
 
-// 📩 Attendance Dispatcher (Manual Entry)
+// 📩 Attendance Dispatcher (persisted + duplicate-safe)
 app.post('/api/attendance', async (req, res) => {
     try {
         const { name, status, phone, time } = req.body || {};
@@ -487,7 +302,7 @@ app.post('/api/attendance', async (req, res) => {
         });
 
         if (alreadyMarked) {
-            return res.json({ success: true, message: 'Already marked today — log synced.' });
+            return res.json({ success: true, message: 'Already marked today — log synced, WhatsApp skipped.' });
         }
 
         const recipientPhone = formatWhatsAppNumber(phone || SECURITY_PHONE);
@@ -499,33 +314,21 @@ app.post('/api/attendance', async (req, res) => {
         if (whatsappClient.info) {
             await whatsappClient.sendMessage(recipientPhone, statusMsg);
         }
-        return res.json({ success: true, message: 'Attendance logged successfully!' });
+        console.log(`📩 Notification sent for ${name} (${status}) to ${recipientPhone}`);
+        return res.json({ success: true, message: 'Notification sent successfully!' });
     } catch (err) {
         console.error('Attendance API Error:', err);
         return res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// 🚨 Emergency Threat Alert (with Anti-Spam Cooldown)
+// 🚨 Emergency Alert — now with live threat snapshot attachment
 app.post('/api/threat-alert', async (req, res) => {
     try {
         const { reason, snapshot } = req.body || {};
         await saveThreat({ reason: reason || 'Unknown threat', hasSnapshot: Boolean(snapshot) });
 
-        // 🛡️ Anti-Spam: Only send WhatsApp alert if 30 seconds have passed since last one
-        const now = Date.now();
-        const timeSinceLast = now - lastThreatAlertTime;
-
-        if (timeSinceLast < THREAT_COOLDOWN_MS) {
-            const waitSec = Math.ceil((THREAT_COOLDOWN_MS - timeSinceLast) / 1000);
-            console.log(`🛡️ Threat logged but WhatsApp alert suppressed (cooldown: ${waitSec}s remaining)`);
-            return res.json({ success: true, message: `Threat logged. WhatsApp alert on cooldown (${waitSec}s).`, suppressed: true });
-        }
-
-        lastThreatAlertTime = now;
-
         const securityNumber = formatWhatsAppNumber(SECURITY_PHONE);
-        const guardNumber = formatWhatsAppNumber(GUARD_PHONE);
         const alertMsg = `🚨 *EMERGENCY BREACH ALERT:*\n${reason || 'Unidentified Threat or Security Bypass Detected at Main Gate!'}` +
             `\n⏰ ${new Date().toLocaleTimeString()}`;
 
@@ -534,17 +337,11 @@ app.post('/api/threat-alert', async (req, res) => {
                 const base64 = snapshot.replace(/^data:image\/\w+;base64,/, '');
                 const media = new MessageMedia('image/jpeg', base64, 'nexus-threat-capture.jpg');
                 await whatsappClient.sendMessage(securityNumber, media, { caption: alertMsg });
-                // Also alert guard if different number
-                if (guardNumber !== securityNumber) {
-                    await whatsappClient.sendMessage(guardNumber, media, { caption: alertMsg });
-                }
             } else {
                 await whatsappClient.sendMessage(securityNumber, alertMsg);
-                if (guardNumber !== securityNumber) {
-                    await whatsappClient.sendMessage(guardNumber, alertMsg);
-                }
             }
         }
+        console.log('🚨 Threat Alert Dispatched!');
         return res.json({ success: true, message: 'Threat alert broadcast fired!' });
     } catch (err) {
         console.error('Threat Alert Error:', err);
@@ -552,7 +349,7 @@ app.post('/api/threat-alert', async (req, res) => {
     }
 });
 
-// 📊 Server Logs
+// 📊 Server Logs — frontend restores real data on load (no localStorage-only world)
 app.get('/api/logs', async (req, res) => {
     const attendance = await getAllAttendance();
     const today = new Date().toDateString();
@@ -568,24 +365,19 @@ app.get('/api/logs', async (req, res) => {
     });
 });
 
-// 🏷️ Enrolled face labels / Dynamic Registry
-app.get('/api/labels', async (req, res) => {
+// 🏷️ Enrolled face labels — dynamic registry for frontend
+app.get('/api/labels', (req, res) => {
     try {
-        const biometrics = await getAllBiometrics();
-        let labels = biometrics.map(b => b.name);
-
         const dir = path.join(__dirname, 'labels');
-        if (fs.existsSync(dir)) {
-            const diskLabels = fs.readdirSync(dir).filter(f => fs.statSync(path.join(dir, f)).isDirectory());
-            labels = Array.from(new Set([...labels, ...diskLabels]));
-        }
+        const labels = fs.readdirSync(dir)
+            .filter(f => fs.statSync(path.join(dir, f)).isDirectory());
         res.json({ labels });
     } catch (err) {
-        res.json({ labels: ['Zaeem', 'Safdar', 'Waqas'] });
+        res.json({ labels: [] });
     }
 });
 
-// 📡 System Status Check
+// 📡 System Status & Announcement Check (Frontend Polling)
 app.get('/api/system-status', (req, res) => {
     res.json({
         locked: isSystemLocked,
@@ -593,7 +385,7 @@ app.get('/api/system-status', (req, res) => {
     });
 });
 
-// 📥 Excel Export
+// 📥 Excel Export — real endpoint for the sidebar button
 app.get('/api/export/excel', async (req, res) => {
     try {
         const rows = (await getAllAttendance()).map(r => ({
@@ -612,12 +404,15 @@ app.get('/api/export/excel', async (req, res) => {
     }
 });
 
+// ============================================================
 // 🤖 Gemini AI Security Assistant Endpoint
+// ============================================================
 app.post('/api/ask-ai', async (req, res) => {
     try {
-        const { question } = req.body || {};
+        const { question, context } = req.body || {};
         if (!question) return res.status(400).json({ success: false, error: 'Question required!' });
 
+        // Build live security context for the AI
         const attendance = await getAllAttendance();
         const today = new Date().toDateString();
         const todayRecords = attendance.filter(r => r.date === today);
@@ -635,8 +430,9 @@ app.post('/api/ask-ai', async (req, res) => {
 - Current Time: ${new Date().toLocaleTimeString()}
 - Database: ${mongoReady ? 'MongoDB Connected' : 'Hybrid Memory Mode'}
 
-Answer concisely (2-3 sentences).`;
+Answer the security officer's question concisely (2-3 sentences max). Be professional and direct. If asked about locking/unlocking, explain the WhatsApp command system.`;
 
+        // Try Gemini first
         if (geminiModel) {
             try {
                 const prompt = `${systemContext}\n\nSecurity Officer's Question: "${question}"`;
@@ -648,6 +444,7 @@ Answer concisely (2-3 sentences).`;
             }
         }
 
+        // 🧠 Smart Local AI Fallback (no API key needed)
         const q = question.toLowerCase();
         let answer = '';
 
@@ -657,20 +454,24 @@ Answer concisely (2-3 sentences).`;
             answer = `${lateCount} persons arrived late today out of ${presentCount} total present. Late is defined as arrival after 9:00 AM.`;
         } else if (q.match(/threat|breach|unknown|unauthorized|attack|suspicious/)) {
             answer = threatCount > 0
-                ? `⚠️ Alert! ${threatCount} security breach attempts detected today at the main gate. All incidents have been logged and WhatsApp alerts dispatched.`
-                : `All security parameters are normal. No unauthorized threats detected today.`;
+                ? `⚠️ Alert! ${threatCount} security breach attempts detected today at the main gate. All incidents have been logged and WhatsApp alerts dispatched to security personnel.`
+                : `All security parameters are normal. No unauthorized threats detected at the main gate today. AI anti-spoofing and blink liveness detection are active.`;
         } else if (q.match(/lock|lockdown|shutdown/)) {
             answer = isSystemLocked
-                ? `System is in EMERGENCY LOCKDOWN mode. Send 'UNLOCK' via WhatsApp to resume operations.`
-                : `System is fully active. Send 'LOCK' via WhatsApp from an authorized admin number to initiate lockdown.`;
+                ? `System is currently in EMERGENCY LOCKDOWN mode. All face scanning is disabled. Send 'UNLOCK' via WhatsApp to the security number to resume operations.`
+                : `System is fully active. To initiate lockdown, send 'LOCK' command via WhatsApp from an authorized admin number.`;
         } else if (q.match(/status|state|running|online/)) {
-            answer = `NexusScan AI is fully operational. ${presentCount} present, ${lateCount} late, ${threatCount} threats today. Database: ${mongoReady ? 'MongoDB Active' : 'Memory Mode'}.`;
+            answer = `NexusScan AI is fully operational. ${presentCount} present, ${lateCount} late, ${threatCount} threats today. Database: ${mongoReady ? 'MongoDB Active' : 'Memory Mode'}. All systems nominal.`;
         } else if (q.match(/visitor|guest|pass|gate pass/)) {
-            answer = `Smart Visitor Entry system is active. Visitors register at the gate, hosts approve via WhatsApp, and automatic passes are issued.`;
+            answer = `The Smart Visitor Entry system is active. Visitors submit their details at the gate, the host receives a WhatsApp approval request, and upon approval receives a NX-XXXX gate pass code for one-time entry verification.`;
         } else if (q.match(/hello|hi|hey|good morning|good evening|salaam|salam/)) {
-            answer = `Hello! I am NexusScan AI Security Assistant. I can report on attendance, threats, system status, and visitor management. How can I assist you?`;
+            answer = `Hello! I am NexusScan AI Security Assistant. I can report on attendance (${presentCount} present), threats (${threatCount} today), system status, and visitor management. How can I assist you?`;
+        } else if (q.match(/who|which person|name/)) {
+            answer = recentNames
+                ? `Recent entries today: ${recentNames}.`
+                : `No entries recorded yet today. The face recognition system is scanning at the main gate.`;
         } else {
-            answer = `Current security status: ${presentCount} present, ${threatCount} threats today. System is ${isSystemLocked ? 'LOCKED' : 'ACTIVE'}.`;
+            answer = `I heard: "${question}". I can assist with: attendance counts, late arrivals, security threats, system status, visitor management, and gate pass verification. Current status: ${presentCount} present, ${threatCount} threats today.`;
         }
 
         return res.json({ success: true, answer, source: 'local-ai' });
@@ -681,7 +482,11 @@ Answer concisely (2-3 sentences).`;
 });
 
 // ============================================================
-// 💬 WhatsApp Admin Command Center
+// 💬 WhatsApp Admin Command Center (whitelist-protected)
+// handleMessage processes a command whether it came from someone
+// else ('message' event) or was self-sent from the connected
+// account ('message_create' with fromMe). Self-sends are needed
+// when the admin controls the system from the same phone.
 // ============================================================
 async function handleMessage(msg) {
     try {
@@ -689,54 +494,70 @@ async function handleMessage(msg) {
         const upperText = rawText.toUpperCase();
         const admin = isAdminChat(msg.from);
 
+        // Only log recognized commands to prevent printing personal chats to the terminal
         const isCommand = ['STATUS', 'LOCK', 'UNLOCK', '1', '2'].includes(upperText) || upperText.startsWith('ANNOUNCE ');
         if (isCommand) {
             console.log(`📨 Incoming WhatsApp command from ${msg.from}: "${rawText}"`);
         }
 
+        // Admin-only commands
         if (upperText === 'STATUS' || upperText === 'LOCK' || upperText === 'UNLOCK' || upperText.startsWith('ANNOUNCE ')) {
             if (!admin) {
-                await msg.reply('⛔ *ACCESS DENIED:* Unauthorized number.');
+                await msg.reply('⛔ *ACCESS DENIED:* This number is not an authorized NexusScan admin.');
+                console.log(`⛔ Blocked admin command from unauthorized ${msg.from}`);
                 return;
             }
         }
 
+        // 🔊 Voice Announcement Command
         if (upperText.startsWith('ANNOUNCE ')) {
             currentAnnouncement = rawText.substring(9);
             await msg.reply(`📢 *Voice Announcement Triggered:* "${currentAnnouncement}"`);
+            console.log(`📢 Voice Broadcast: ${currentAnnouncement}`);
             setTimeout(() => { currentAnnouncement = ""; }, 6000);
             return;
         }
 
+        // 1. STATUS Command
         if (upperText === 'STATUS') {
             const threats = await countThreatsToday();
             const statusReport = `📊 *NexusScan System Live Status*\n\n` +
                 `⚙️ *Security Engine:* ${isSystemLocked ? '🔴 LOCKED' : '🟢 ACTIVE'}\n` +
                 `🚨 *Threats Today:* ${threats}\n` +
                 `⏰ *Server:* Running on Port ${PORT}\n` +
-                `📡 *Database:* ${mongoReady ? 'MongoDB Active' : 'Hybrid Memory Mode'}`;
+                `📡 *Database:* ${mongoReady ? 'MongoDB Active' : 'Hybrid Memory Mode'}\n\n` +
+                `Send *LOCK* to disable gate access.\n` +
+                `Send *UNLOCK* to resume operations.\n` +
+                `Send *ANNOUNCE [msg]* for audio broadcast.`;
             await msg.reply(statusReport);
+            console.log(`📡 Status Report Sent to ${msg.from}`);
             return;
         }
 
+        // 2. LOCK Command
         if (upperText === 'LOCK') {
             isSystemLocked = true;
             await msg.reply('🔴 *EMERGENCY LOCKDOWN ACTIVATED!* Scanner disabled at Main Gate.');
+            console.log(`🔴 System Locked via WhatsApp Command by ${msg.from}`);
             return;
         }
 
+        // 3. UNLOCK Command
         if (upperText === 'UNLOCK') {
             isSystemLocked = false;
             await msg.reply('🟢 *LOCKDOWN RELEASED.* NexusScan normal operations resumed.');
+            console.log(`🟢 System Unlocked via WhatsApp Command by ${msg.from}`);
             return;
         }
 
+        // 4. Visitor Approval Responses — mapped to the PENDING request of THIS host
         if (upperText === '1' || upperText === '2') {
             const hostDigits = String(msg.from).replace(/\D/g, '');
             const pending = await findPendingPassForHost(hostDigits);
 
             if (!pending) {
-                await msg.reply('⚠️ *No pending visitor request found* for this number.');
+                await msg.reply('⚠️ *No pending visitor request found* for this number. Please submit a Smart Visitor Entry first, then reply 1 or 2.');
+                console.log(`⚠️ Reply "${upperText}" from ${msg.from} but no pending request found.`);
                 return;
             }
 
@@ -746,56 +567,47 @@ async function handleMessage(msg) {
                 const approvalMsg = `✅ *VISITOR APPROVED!*\n\n` +
                     `👤 *Visitor:* ${pending.visitorName}\n` +
                     `🪪 *Digital Gate Pass Code:* ${passCode}\n` +
-                    `📌 Status: Valid for Today (single entry)`;
+                    `📌 Status: Valid for Today (single entry)\n` +
+                    `Show this code to Main Gate Security Guard for verification.`;
                 await msg.reply(approvalMsg);
 
-                const guardNumber = formatWhatsAppNumber(GUARD_PHONE);
+                // --- NEW: SEND TO GUARD'S PHONE AUTOMATICALLY ---
+                const guardNumber = formatWhatsAppNumber(SECURITY_PHONE);
                 const hostNumber = String(msg.from).replace('@c.us', '');
                 const guardAlertMsg = `🛂 *GATE ALERT: Visitor Approved*\n\n` +
                     `👤 *Visitor:* ${pending.visitorName}\n` +
                     `🪪 *Pass Code:* ${passCode}\n` +
                     `📱 *Approved By:* ${hostNumber}\n\n` +
                     `Please allow entry.`;
-
+                
                 if (whatsappClient.info && msg.from !== guardNumber) {
                     await whatsappClient.sendMessage(guardNumber, guardAlertMsg);
                 }
+                // ------------------------------------------------
+
+                console.log(`✅ Visitor ${pending.visitorName} approved by ${msg.from} — Pass ${passCode}`);
             } else {
                 await updateVisitorPass(pending._id, { status: 'rejected' });
                 await msg.reply(`❌ *VISITOR REJECTED!*\n${pending.visitorName} — Entry denied at Main Gate.`);
+                console.log(`❌ Visitor ${pending.visitorName} rejected by ${msg.from}`);
             }
             return;
         }
+
     } catch (err) {
         console.error('WhatsApp Command Error:', err);
     }
 }
 
-whatsappClient.on('qr', (qr) => {
-    console.log('\n📲 ========================================================');
-    console.log('⚡ SCAN THIS QR CODE WITH WHATSAPP ON YOUR PHONE:');
-    console.log('========================================================\n');
-    qrcode.generate(qr, { small: true });
-});
-
-whatsappClient.on('authenticated', () => {
-    console.log('🔑 WhatsApp Session Authenticated Successfully!');
-});
-
-whatsappClient.on('auth_failure', (msg) => {
-    console.error('❌ WhatsApp Authentication Failed:', msg);
-});
-
-whatsappClient.on('ready', () => {
-    console.log('✅ NexusScan AI WhatsApp Engine is READY and Connected!');
-});
-
-whatsappClient.on('disconnected', (reason) => {
-    console.warn('⚠️ WhatsApp Disconnected:', reason);
-});
-
+// Messages received from OTHER people
 whatsappClient.on('message', handleMessage);
-whatsappClient.on('message_create', (msg) => { if (msg.fromMe) handleMessage(msg); });
+
+// Messages the connected account sends to ITSELF ("Message yourself").
+// Needed when the admin sends LOCK/UNLOCK/STATUS from the same phone
+// that runs the system — those arrive with fromMe=true.
+whatsappClient.on('message_create', (msg) => {
+    if (msg.fromMe) handleMessage(msg);
+});
 
 // ============================================================
 // 🚀 Startup
@@ -804,6 +616,4 @@ app.listen(PORT, '127.0.0.1', () => {
     console.log(`🚀 NexusScan AI Backend Engine Running on http://127.0.0.1:${PORT}`);
 });
 
-whatsappClient.initialize().catch(err => {
-    console.warn('⚠️ WhatsApp initialization note:', err.message);
-});
+whatsappClient.initialize();

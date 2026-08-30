@@ -18,22 +18,13 @@
             <span class="text-[#38bdf8] font-orbitron font-bold tracking-wider text-base">NEXUSSCAN AI PRO</span>
             <nav class="hidden md:flex space-x-4 text-xs font-semibold">
                 <button onclick="location.reload()" class="text-[#38bdf8] border-b-2 border-[#38bdf8] pb-1">Security View</button>
-                <button id="navFacultyView" data-roles="admin,faculty" onclick="accessFacultyView()" class="text-slate-400 hover:text-slate-200 transition">Faculty View</button>
+                <button onclick="accessFacultyView()" class="text-slate-400 hover:text-slate-200 transition">Faculty View</button>
             </nav>
         </div>
         <div class="flex items-center space-x-3 text-slate-400">
-            <!-- 👤 User Badge & Role -->
-            <div id="userProfileBadge" class="flex items-center gap-2 bg-[#131e35] border border-slate-700 px-3 py-1 rounded-full text-xs">
-                <span id="userRoleIndicator" class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                <span id="headerUserName" class="text-slate-300 font-semibold font-mono">Guard Officer</span>
-                <span id="headerUserRole" class="text-[10px] bg-slate-800 text-[#38bdf8] font-bold px-1.5 py-0.5 rounded uppercase font-mono">GUARD</span>
-                <button onclick="logoutUser()" title="Logout" class="text-slate-400 hover:text-rose-400 ml-1">
-                    <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
-                </button>
-            </div>
             <input id="logSearch" type="text" placeholder="Search logs..." class="bg-[#131e35] border border-slate-700 rounded px-2.5 py-1 text-xs text-white focus:outline-none focus:border-[#38bdf8]">
             <!-- 📱 Mobile Guard View Toggle -->
-            <button id="btnMobileGuard" data-roles="admin,guard" onclick="openMobileGuardView()" title="Mobile Guard View"
+            <button onclick="openMobileGuardView()" title="Mobile Guard View"
                 class="flex items-center gap-1.5 bg-emerald-600/20 border border-emerald-500/60 hover:bg-emerald-600/40 text-emerald-400 text-[11px] font-bold px-2.5 py-1.5 rounded transition">
                 <i data-lucide="smartphone" class="w-3.5 h-3.5"></i>
                 <span class="hidden sm:inline">Guard View</span>
@@ -73,80 +64,56 @@
                 </div>
 
                 <!-- ACTIONS NAV -->
-                <nav class="space-y-2 text-xs font-semibold" id="actionsNav">
-                    <!-- 🤖 AI Chat + Voice Assistant Panel Button -->
-                    <button id="btnAiAssistant" type="button" data-roles="admin,guard,faculty" onclick="openAiPanel()" class="action-btn w-full flex items-center justify-between bg-indigo-600/30 border border-indigo-500 text-indigo-300 hover:bg-indigo-600/50 p-2.5 rounded text-left transition shadow-lg group">
-                        <div class="flex items-center space-x-3">
-                            <i data-lucide="bot" class="w-4 h-4 text-indigo-400 group-hover:scale-110 transition-transform animate-pulse"></i>
-                            <span class="font-bold">AI Assistant</span>
-                        </div>
-                        <span class="role-pill text-[9px] bg-indigo-950/80 border border-indigo-700 text-indigo-300 px-1 rounded font-mono">ALL</span>
+                <nav class="space-y-2 text-xs font-semibold">
+                    <!-- 🎙️ NEW FEATURE: AI Voice Guard Button -->
+                   <!-- 🤖 AI Chat + Voice Assistant Panel Button -->
+<button onclick="openAiPanel()" class="w-full flex items-center space-x-3 bg-indigo-600/30 border border-indigo-500 text-indigo-300 hover:bg-indigo-600/50 p-2.5 rounded text-left transition shadow-lg group">
+    <i data-lucide="bot" class="w-4 h-4 text-indigo-400 group-hover:scale-110 transition-transform animate-pulse"></i>
+    <span class="font-bold">AI Security Assistant</span>
+</button>
+                    <button onclick="openVisitorModal()" class="w-full flex items-center space-x-3 bg-cyan-500/20 border border-cyan-500 text-cyan-300 hover:bg-cyan-500/30 p-2.5 rounded text-left transition">
+                        <i data-lucide="user-check" class="w-4 h-4 text-cyan-400"></i>
+                        <span>Smart Visitor Entry</span>
                     </button>
 
-                    <button id="btnVisitorEntry" type="button" data-roles="admin,guard" onclick="openVisitorModal()" class="action-btn w-full flex items-center justify-between bg-cyan-500/20 border border-cyan-500 text-cyan-300 hover:bg-cyan-500/30 p-2.5 rounded text-left transition">
-                        <div class="flex items-center space-x-3">
-                            <i data-lucide="user-check" class="w-4 h-4 text-cyan-400"></i>
-                            <span>Smart Visitor Entry</span>
-                        </div>
-                        <span class="role-pill text-[9px] bg-cyan-950 border border-cyan-700 text-cyan-400 px-1 rounded font-mono">GUARD</span>
+                    <button onclick="openPassModal()" class="w-full flex items-center space-x-3 bg-violet-500/20 border border-violet-500 text-violet-300 hover:bg-violet-500/30 p-2.5 rounded text-left transition">
+                        <i data-lucide="ticket-check" class="w-4 h-4 text-violet-400"></i>
+                        <span>Verify Gate Pass</span>
                     </button>
 
-                    <button id="btnVerifyPass" type="button" data-roles="admin,guard" onclick="openPassModal()" class="action-btn w-full flex items-center justify-between bg-violet-500/20 border border-violet-500 text-violet-300 hover:bg-violet-500/30 p-2.5 rounded text-left transition">
-                        <div class="flex items-center space-x-3">
-                            <i data-lucide="ticket-check" class="w-4 h-4 text-violet-400"></i>
-                            <span>Verify Gate Pass</span>
-                        </div>
-                        <span class="role-pill text-[9px] bg-violet-950 border border-violet-700 text-violet-400 px-1 rounded font-mono">GUARD</span>
+                    <button onclick="triggerEmergencyAlert()" class="w-full flex items-center space-x-3 bg-rose-600/20 border border-rose-500 text-rose-300 hover:bg-rose-600/40 p-2.5 rounded text-left transition animate-pulse">
+                        <i data-lucide="siren" class="w-4 h-4 text-rose-400"></i>
+                        <span class="font-bold">EMERGENCY RED ALERT</span>
                     </button>
 
-                    <button id="btnEmergencyAlert" type="button" data-roles="admin,guard" onclick="triggerEmergencyAlert()" class="action-btn w-full flex items-center justify-between bg-rose-600/20 border border-rose-500 text-rose-300 hover:bg-rose-600/40 p-2.5 rounded text-left transition animate-pulse">
-                        <div class="flex items-center space-x-3">
-                            <i data-lucide="siren" class="w-4 h-4 text-rose-400"></i>
-                            <span class="font-bold">EMERGENCY ALERT</span>
-                        </div>
-                        <span class="role-pill text-[9px] bg-rose-950 border border-rose-700 text-rose-400 px-1 rounded font-mono">GUARD</span>
+                    <button onclick="manualEntry()" class="w-full flex items-center space-x-3 bg-emerald-500/20 border border-emerald-500 text-emerald-300 hover:bg-emerald-500/30 p-2.5 rounded text-left transition">
+                        <i data-lucide="keyboard" class="w-4 h-4"></i>
+                        <span>Manual Entry</span>
                     </button>
 
-                    <button id="btnManualEntry" type="button" data-roles="admin,guard" onclick="openManualModal()" class="action-btn w-full flex items-center justify-between bg-emerald-500/20 border border-emerald-500 text-emerald-300 hover:bg-emerald-500/30 p-2.5 rounded text-left transition">
-                        <div class="flex items-center space-x-3">
-                            <i data-lucide="keyboard" class="w-4 h-4 text-emerald-400"></i>
-                            <span>Manual Entry</span>
-                        </div>
-                        <span class="role-pill text-[9px] bg-emerald-950 border border-emerald-700 text-emerald-400 px-1 rounded font-mono">GUARD</span>
+                    <button onclick="enrollNewFace()" class="w-full flex items-center space-x-3 bg-sky-500/20 border border-sky-500 text-sky-300 hover:bg-sky-500/30 p-2.5 rounded text-left transition">
+                        <i data-lucide="user-plus" class="w-4 h-4 text-sky-400"></i>
+                        <span>Enroll New Face</span>
                     </button>
 
-                    <button id="btnEnrollFace" type="button" data-roles="admin" onclick="enrollNewFace()" class="action-btn w-full flex items-center justify-between bg-sky-500/20 border border-sky-500 text-sky-300 hover:bg-sky-500/30 p-2.5 rounded text-left transition">
-                        <div class="flex items-center space-x-3">
-                            <i data-lucide="user-plus" class="w-4 h-4 text-sky-400"></i>
-                            <span>Enroll Face</span>
-                        </div>
-                        <span class="role-pill text-[9px] bg-sky-950 border border-sky-700 text-sky-400 px-1 rounded font-mono">ADMIN</span>
+                    <button onclick="markLeaveEntry()" class="w-full flex items-center space-x-3 bg-amber-500/20 border border-amber-500 text-amber-300 hover:bg-amber-500/30 p-2.5 rounded text-left transition">
+                        <i data-lucide="user-x" class="w-4 h-4"></i>
+                        <span>Mark Leave</span>
                     </button>
 
-                    <button id="btnMarkLeave" type="button" data-roles="admin" onclick="openLeaveModal()" class="action-btn w-full flex items-center justify-between bg-amber-500/20 border border-amber-500 text-amber-300 hover:bg-amber-500/30 p-2.5 rounded text-left transition">
-                        <div class="flex items-center space-x-3">
-                            <i data-lucide="user-x" class="w-4 h-4 text-amber-400"></i>
-                            <span>Mark Leave</span>
-                        </div>
-                        <span class="role-pill text-[9px] bg-amber-950 border border-amber-700 text-amber-400 px-1 rounded font-mono">ADMIN</span>
-                    </button>
-
-                    <button id="btnClearLogs" type="button" data-roles="admin" onclick="clearDatabase()" class="action-btn w-full flex items-center justify-between text-slate-400 border border-transparent hover:bg-rose-950/30 hover:border-rose-800 hover:text-rose-400 p-2.5 rounded text-left transition">
-                        <div class="flex items-center space-x-3">
-                            <i data-lucide="trash-2" class="w-4 h-4"></i>
-                            <span>Clear Logs</span>
-                        </div>
-                        <span class="role-pill text-[9px] bg-slate-900 border border-slate-700 text-slate-400 px-1 rounded font-mono">ADMIN</span>
+                    <button onclick="clearDatabase()" class="w-full flex items-center space-x-3 text-slate-400 hover:bg-rose-950/30 hover:text-rose-400 p-2.5 rounded text-left transition">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        <span>Clear Logs</span>
                     </button>
                 </nav>
 
-                <div id="facultySection" data-roles="admin,faculty" class="hidden border-t border-purple-900/50 pt-4 space-y-2">
+                <div id="facultySection" class="hidden border-t border-purple-900/50 pt-4 space-y-2">
                     <span class="text-[10px] text-purple-400 font-bold tracking-wider block">FACULTY CONTROLS</span>
                     <button onclick="location.reload()" class="w-full bg-purple-900/30 border border-purple-500/40 text-purple-200 text-xs py-2 rounded hover:bg-purple-800/40 transition">Force Reboot</button>
                 </div>
             </div>
 
-            <a id="btnExportExcel" data-roles="admin,faculty" href="http://127.0.0.1:3000/api/export/excel" target="_blank" class="block w-full text-center border border-[#38bdf8]/40 hover:border-[#38bdf8] text-[#38bdf8] text-xs font-bold py-2.5 rounded transition tracking-wider mt-4">
+            <a href="http://127.0.0.1:3000/api/export/excel" target="_blank" class="block w-full text-center border border-[#38bdf8]/40 hover:border-[#38bdf8] text-[#38bdf8] text-xs font-bold py-2.5 rounded transition tracking-wider mt-4">
                 Export Logs (.xlsx)
             </a>
         </aside>
@@ -285,53 +252,6 @@
                     <button type="submit" class="w-1/2 bg-violet-500 hover:bg-violet-400 text-white font-bold py-2.5 rounded text-xs transition tracking-wider">
                         VERIFY PASS
                     </button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- ⌨️ MANUAL ENTRY MODAL -->
-    <div id="manualModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div class="bg-[#0f172a] border border-slate-700 w-full max-w-sm rounded-xl p-6 space-y-4 shadow-2xl">
-            <div class="flex justify-between items-center border-b border-slate-800 pb-3">
-                <h3 class="text-sm font-bold text-emerald-400 tracking-wider font-orbitron">MANUAL ATTENDANCE ENTRY</h3>
-                <button type="button" onclick="closeManualModal()" class="text-slate-400 hover:text-white text-lg">&times;</button>
-            </div>
-            <form onsubmit="submitManualEntry(event)" class="space-y-3 text-xs">
-                <div>
-                    <label class="text-slate-400 block mb-1">Person Full Name</label>
-                    <input id="manualPersonName" type="text" placeholder="e.g. Muhammad Ali" required class="w-full bg-[#131e35] border border-slate-700 rounded p-2.5 text-white focus:outline-none focus:border-emerald-500">
-                </div>
-                <div>
-                    <label class="text-slate-400 block mb-1">Attendance Status</label>
-                    <select id="manualPersonStatus" class="w-full bg-[#131e35] border border-slate-700 rounded p-2.5 text-white focus:outline-none focus:border-emerald-500">
-                        <option value="Present">Present</option>
-                        <option value="Late">Late</option>
-                    </select>
-                </div>
-                <div class="flex space-x-3 pt-2">
-                    <button type="button" onclick="closeManualModal()" class="w-1/2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold py-2.5 rounded text-xs transition">Cancel</button>
-                    <button type="submit" class="w-1/2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 rounded text-xs transition">MARK ATTENDANCE</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- 🏖️ MARK LEAVE MODAL -->
-    <div id="leaveModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div class="bg-[#0f172a] border border-slate-700 w-full max-w-sm rounded-xl p-6 space-y-4 shadow-2xl">
-            <div class="flex justify-between items-center border-b border-slate-800 pb-3">
-                <h3 class="text-sm font-bold text-amber-400 tracking-wider font-orbitron">MARK OFFICIAL LEAVE</h3>
-                <button type="button" onclick="closeLeaveModal()" class="text-slate-400 hover:text-white text-lg">&times;</button>
-            </div>
-            <form onsubmit="submitLeaveEntry(event)" class="space-y-3 text-xs">
-                <div>
-                    <label class="text-slate-400 block mb-1">Person Full Name</label>
-                    <input id="leavePersonName" type="text" placeholder="e.g. Dr. Usman Khan" required class="w-full bg-[#131e35] border border-slate-700 rounded p-2.5 text-white focus:outline-none focus:border-amber-500">
-                </div>
-                <div class="flex space-x-3 pt-2">
-                    <button type="button" onclick="closeLeaveModal()" class="w-1/2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold py-2.5 rounded text-xs transition">Cancel</button>
-                    <button type="submit" class="w-1/2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-2.5 rounded text-xs transition">RECORD LEAVE</button>
                 </div>
             </form>
         </div>
@@ -476,68 +396,6 @@
                     </button>
                 </div>
                 <div class="text-[10px] text-slate-600 mt-1.5 text-center">Voice or text · Powered by NexusScan AI Engine</div>
-            </div>
-        </div>
-    </div>
-
-    <!-- 🔐 RBAC LOGIN OVERLAY -->
-    <div id="loginOverlay" class="fixed inset-0 bg-[#080d17]/95 backdrop-blur-md z-50 flex items-center justify-center p-4">
-        <div class="bg-[#0f172a] border border-cyan-500/50 rounded-2xl w-full max-w-md p-6 shadow-2xl relative space-y-5" style="box-shadow: 0 0 50px rgba(56,189,248,0.2)">
-            <!-- Top Branding -->
-            <div class="text-center space-y-1">
-                <div class="inline-flex p-3 rounded-full bg-cyan-950/60 border border-cyan-500/40 text-cyan-400 mb-2">
-                    <i data-lucide="shield-check" class="w-8 h-8"></i>
-                </div>
-                <h2 class="text-lg font-bold font-orbitron text-cyan-300 tracking-wider">NEXUSSCAN COMMAND ACCESS</h2>
-                <p class="text-xs text-slate-400">Zero-Trust Role-Based Physical Security Gateway</p>
-            </div>
-
-            <!-- Error Banner -->
-            <div id="loginError" class="hidden bg-rose-950/60 border border-rose-600 text-rose-300 text-xs px-3 py-2 rounded-lg text-center font-mono"></div>
-
-            <!-- Login Form -->
-            <form onsubmit="handleLoginSubmit(event)" class="space-y-4">
-                <div class="space-y-1">
-                    <label class="text-[11px] font-mono font-bold text-slate-400">OPERATOR USERNAME</label>
-                    <div class="relative">
-                        <i data-lucide="user" class="w-4 h-4 text-slate-500 absolute left-3 top-3"></i>
-                        <input id="loginUsername" type="text" required placeholder="admin / guard / faculty"
-                            class="w-full bg-[#131e35] border border-slate-700 focus:border-cyan-500 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-600 focus:outline-none">
-                    </div>
-                </div>
-
-                <div class="space-y-1">
-                    <label class="text-[11px] font-mono font-bold text-slate-400">SECURITY PASSPHRASE</label>
-                    <div class="relative">
-                        <i data-lucide="key" class="w-4 h-4 text-slate-500 absolute left-3 top-3"></i>
-                        <input id="loginPassword" type="password" required placeholder="Enter password"
-                            class="w-full bg-[#131e35] border border-slate-700 focus:border-cyan-500 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-600 focus:outline-none">
-                    </div>
-                </div>
-
-                <button type="submit" id="loginSubmitBtn"
-                    class="w-full py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold font-orbitron tracking-wider rounded-xl transition shadow-lg flex items-center justify-center gap-2">
-                    <i data-lucide="log-in" class="w-4 h-4"></i> AUTHENTICATE
-                </button>
-            </form>
-
-            <!-- Quick Demo Role Switches -->
-            <div class="pt-3 border-t border-slate-800 text-center">
-                <div class="text-[10px] font-mono text-slate-500 mb-2">QUICK DEMO ACCESS (1-CLICK)</div>
-                <div class="grid grid-cols-3 gap-2">
-                    <button onclick="quickLogin('guard', 'guard123')"
-                        class="bg-[#131e35] hover:bg-slate-800 border border-emerald-500/40 text-emerald-400 text-[10px] font-bold py-1.5 rounded-lg transition">
-                        👮 Guard
-                    </button>
-                    <button onclick="quickLogin('faculty', 'faculty123')"
-                        class="bg-[#131e35] hover:bg-slate-800 border border-indigo-500/40 text-indigo-400 text-[10px] font-bold py-1.5 rounded-lg transition">
-                        🎓 Faculty
-                    </button>
-                    <button onclick="quickLogin('admin', 'admin123')"
-                        class="bg-[#131e35] hover:bg-slate-800 border border-cyan-500/40 text-cyan-400 text-[10px] font-bold py-1.5 rounded-lg transition">
-                        🔐 Admin
-                    </button>
-                </div>
             </div>
         </div>
     </div>

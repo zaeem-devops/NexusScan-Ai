@@ -1,15 +1,13 @@
 let isSystemLocked = false;
 const video = document.getElementById('video');
+const savedData = localStorage.getItem('attendance_records');
+let markedAttendance = new Set(savedData ? JSON.parse(savedData) : []);
+let faceMatcher = null;
+
 let counts = { present: 0, late: 0, unknown: 0 };
 let unknownDetected = false;
 let lastAnnouncement = "";
-let currentUser = null;
-let statsChartInstance = null;
-let detecting = false;
-let isAppStarted = false;
-let detectionInterval = null;
-let lastThreatTime = 0;
-let previousLockState = null;
+let registeredDescriptors = [];
 
 // API Base URL
 const API_BASE_URL = 'http://127.0.0.1:3000';
@@ -23,210 +21,16 @@ setInterval(() => {
     if (mgClockEl) mgClockEl.innerText = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
 }, 1000);
 
-// ============================================================
-// 🔐 Authentication & Role-Based Access Control (RBAC)
-// ============================================================
-async function initAuth() {
-    const token = sessionStorage.getItem('nexus_token');
-    const overlay = document.getElementById('loginOverlay');
-    
-    if (!token) {
-        if (overlay) overlay.classList.remove('hidden');
-        return false;
-    }
-
-    try {
-        const res = await fetch(`${API_BASE_URL}/api/auth/me`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
-        if (data.success && data.user) {
-            currentUser = data.user;
-            updateAuthUI(data.user);
-            if (overlay) overlay.classList.add('hidden');
-            startApp();
-            return true;
-        } else {
-            sessionStorage.removeItem('nexus_token');
-            if (overlay) overlay.classList.remove('hidden');
-            return false;
-        }
-    } catch (e) {
-        const saved = sessionStorage.getItem('nexus_user');
-        if (saved) {
-            currentUser = JSON.parse(saved);
-            updateAuthUI(currentUser);
-            if (overlay) overlay.classList.add('hidden');
-            startApp();
-            return true;
-        }
-        if (overlay) overlay.classList.remove('hidden');
-        return false;
-    }
-}
-
-function updateAuthUI(user) {
-    const nameEl = document.getElementById('headerUserName');
-    const roleEl = document.getElementById('headerUserRole');
-    const indicatorEl = document.getElementById('userRoleIndicator');
-
-    if (nameEl) nameEl.textContent = user.name || user.username;
-    if (roleEl) {
-        roleEl.textContent = user.role.toUpperCase();
-        if (user.role === 'admin') roleEl.className = "text-[10px] bg-cyan-950 text-cyan-400 border border-cyan-700 font-bold px-1.5 py-0.5 rounded uppercase font-mono";
-        else if (user.role === 'faculty') roleEl.className = "text-[10px] bg-indigo-950 text-indigo-400 border border-indigo-700 font-bold px-1.5 py-0.5 rounded uppercase font-mono";
-        else roleEl.className = "text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-700 font-bold px-1.5 py-0.5 rounded uppercase font-mono";
-    }
-    if (indicatorEl) {
-        indicatorEl.className = user.role === 'admin' ? "w-2 h-2 rounded-full bg-cyan-400" : (user.role === 'faculty' ? "w-2 h-2 rounded-full bg-indigo-400" : "w-2 h-2 rounded-full bg-emerald-400");
-    }
-
-    applyRolePermissions(user.role);
-}
-
-// 🛡️ DYNAMIC ROLE-BASED ACCESS CONTROL (RBAC) UI ENGINE
-function applyRolePermissions(role) {
-    if (!role) role = 'guard';
-    const userRole = role.toLowerCase();
-
-    // Select all role-guarded elements
-    const roleElements = document.querySelectorAll('[data-roles]');
-    roleElements.forEach(el => {
-        const rawRoles = el.getAttribute('data-roles') || '';
-        const allowedRoles = rawRoles.split(',').map(r => r.trim().toLowerCase());
-        const isAllowed = allowedRoles.includes(userRole);
-
-        const pill = el.querySelector('.role-pill');
-        let lockBadge = el.querySelector('.lock-badge');
-
-        if (isAllowed) {
-            // ✅ ENABLED: Full interactive state
-            el.classList.remove('opacity-25', 'grayscale', 'cursor-not-allowed', 'pointer-events-none');
-            el.removeAttribute('disabled');
-            el.removeAttribute('title');
-            if (el.tagName === 'A') el.style.pointerEvents = 'auto';
-
-            if (pill) pill.classList.remove('hidden');
-            if (lockBadge) lockBadge.remove();
-        } else {
-            // ⛔ DISABLED: Visually locked and non-interactive
-            el.classList.add('opacity-25', 'grayscale', 'cursor-not-allowed', 'pointer-events-none');
-            el.setAttribute('disabled', 'true');
-            el.setAttribute('title', `🔒 Restricted: Requires [${allowedRoles.join('/')}] permissions`);
-            if (el.tagName === 'A') el.style.pointerEvents = 'none';
-
-            if (pill) pill.classList.add('hidden');
-            if (!lockBadge) {
-                lockBadge = document.createElement('span');
-                lockBadge.className = 'lock-badge text-[9px] bg-slate-900 border border-slate-700 text-slate-500 px-1 py-0.5 rounded font-mono';
-                lockBadge.innerText = '🔒 LOCKED';
-                el.appendChild(lockBadge);
-            }
-        }
-    });
-
-    // Faculty Controls Sidebar Section
-    const facultySection = document.getElementById('facultySection');
-    if (facultySection) {
-        if (['faculty', 'admin'].includes(userRole)) {
-            facultySection.classList.remove('hidden');
-        } else {
-            facultySection.classList.add('hidden');
-        }
-    }
-
-    // Top Header Navigation Tabs
-    const navFaculty = document.getElementById('navFacultyView');
-    if (navFaculty) {
-        if (['faculty', 'admin'].includes(userRole)) {
-            navFaculty.classList.remove('hidden');
-        } else {
-            navFaculty.classList.add('hidden');
-        }
-    }
-}
-
-async function handleLoginSubmit(event) {
-    if (event) event.preventDefault();
-    const usernameInput = document.getElementById('loginUsername');
-    const passwordInput = document.getElementById('loginPassword');
-    const errEl = document.getElementById('loginError');
-
-    const username = usernameInput?.value?.trim();
-    const password = passwordInput?.value?.trim();
-
-    if (!username || !password) return;
-
-    await performLogin(username, password, errEl);
-}
-
-async function quickLogin(username, password) {
-    const errEl = document.getElementById('loginError');
-    await performLogin(username, password, errEl);
-}
-
-async function performLogin(username, password, errEl) {
-    if (errEl) errEl.classList.add('hidden');
-    try {
-        const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
-        });
-        const data = await res.json();
-        if (data.success && data.token) {
-            sessionStorage.setItem('nexus_token', data.token);
-            sessionStorage.setItem('nexus_user', JSON.stringify(data.user));
-            currentUser = data.user;
-            updateAuthUI(data.user);
-            
-            const overlay = document.getElementById('loginOverlay');
-            if (overlay) overlay.classList.add('hidden');
-            
-            showToast(`Authenticated as ${data.user.name || data.user.username} (${data.user.role.toUpperCase()})`, 'success');
-            startApp();
-        } else {
-            if (errEl) {
-                errEl.textContent = data.error || "Authentication failed.";
-                errEl.classList.remove('hidden');
-            }
-        }
-    } catch (err) {
-        if (errEl) {
-            errEl.textContent = "Server unreachable. Make sure 'node server.js' is running.";
-            errEl.classList.remove('hidden');
-        }
-    }
-}
-
-function logoutUser() {
-    isAppStarted = false;
-    if (detectionInterval) {
-        clearInterval(detectionInterval);
-        detectionInterval = null;
-    }
-    sessionStorage.removeItem('nexus_token');
-    sessionStorage.removeItem('nexus_user');
-    currentUser = null;
-    const overlay = document.getElementById('loginOverlay');
-    if (overlay) overlay.classList.remove('hidden');
-    showToast("Logged out successfully.", "warning");
-}
-
-// ============================================================
-// 🚀 Core App Initializer
-// ============================================================
+// Core App Initializer
 async function startApp() {
-    if (isAppStarted) return;
-    isAppStarted = true;
-
     await startVideo();
     startSecondaryCamera();
 
     try {
         const statusEl = document.getElementById('systemStatus');
-        if (statusEl) statusEl.innerText = "AI: Loading Local Models...";
+        if (statusEl) statusEl.innerText = "AI: Loading Models...";
 
+        // Local models first (demo-safe), CDN fallback
         const LOCAL_MODELS = './models';
         const CDN_MODELS = 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights';
         const nets = [
@@ -240,18 +44,27 @@ async function startApp() {
             catch { await net.loadFromUri(CDN_MODELS); }
         }
 
-        if (statusEl) statusEl.innerText = "Server Decision Engine: ACTIVE";
-        showToast("Biometric Vector Extractor Active", "success");
+        if (statusEl) statusEl.innerText = "AI Processing: Active";
+        showToast("Face-API Engine Ready (Local Models)", "success");
 
         await restoreLogsFromServer();
-        initStatsChart();
+
+        baseDescriptors = await loadLabeledImages();
+        await rebuildFaceMatcher();
+        showToast(
+            baseDescriptors.length
+                ? `Face Registry Loaded: ${baseDescriptors.length} persons`
+                : "Face Registry Empty — use 'Enroll New Face' to add people",
+            baseDescriptors.length ? "success" : "warning"
+        );
         detectFaces();
+        initStatsChart();  // 📊 Start Live Analytics Chart
     } catch (err) {
         console.error("AI Models fallback activated:", err);
         const statusEl = document.getElementById('systemStatus');
-        if (statusEl) statusEl.innerText = "Engine: Ready (Manual Mode)";
-        showToast("Camera Active - Manual Mode Enabled", "warning");
-        initStatsChart();
+        if (statusEl) statusEl.innerText = "AI Engine: Ready (Manual Mode)";
+        showToast("Camera Active - Manual Fallback Enabled", "warning");
+        initStatsChart(); // chart still works in fallback
     }
 }
 
@@ -286,32 +99,88 @@ async function startVideo() {
             if (video) video.srcObject = stream;
             if (overlay) overlay.classList.add('hidden');
         } catch (err) {
-            console.error("Camera Error:", err);
+            console.error("Camera access failed:", err);
             if (overlay) overlay.classList.remove('hidden');
+            showToast("Camera access missing!", "error");
         }
+    } else {
+        if (overlay) overlay.classList.remove('hidden');
     }
 }
 
-function startSecondaryCamera() {
-    const secVideo = document.getElementById('secondaryVideo');
-    if (!secVideo) return;
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then(stream => { secVideo.srcObject = stream; })
-            .catch(() => {});
+// 📹 Dual-Camera Support: PIP feed from a second physical camera when available
+async function startSecondaryCamera() {
+    try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cams = devices.filter(d => d.kind === 'videoinput');
+        if (cams.length < 2) return;
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { exact: cams[1].deviceId } }
+        });
+        const cam2 = document.getElementById('video2');
+        const pip = document.getElementById('cam2Pip');
+        if (cam2 && pip) {
+            cam2.srcObject = stream;
+            pip.classList.remove('hidden');
+        }
+    } catch (e) {
+        console.warn('Secondary camera unavailable:', e);
     }
 }
 
-// ============================================================
-// 📸 Server-Side Biometric Enrollment
-// ============================================================
+// 🏷️ Dynamic Face Registry — loads every enrolled person from /api/labels
+async function loadLabeledImages() {
+    let labels = [];
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/labels`);
+        const data = await res.json();
+        labels = data.labels || [];
+    } catch (e) {
+        labels = ['Zaeem', 'Safdar', 'Waqas']; // offline fallback
+    }
+
+    try {
+        const descriptors = await Promise.all(labels.map(async label => {
+            const descriptions = [];
+            for (let i = 1; i <= 6; i++) {
+                try {
+                    const img = await faceapi.fetchImage(`./labels/${encodeURIComponent(label)}/${i}.jpg`);
+                    const detections = await faceapi.detectSingleFace(img).withFaceLandmarks().withFaceDescriptor();
+                    if (detections) descriptions.push(detections.descriptor);
+                } catch (e) { }
+            }
+            return descriptions.length
+                ? new faceapi.LabeledFaceDescriptors(label, descriptions)
+                : null;
+        }));
+        return descriptors.filter(Boolean);
+    } catch (e) { return []; }
+}
+
+// 👤 Runtime Enrollment — custom faces stored in browser localStorage
+let baseDescriptors = [];
+
+function loadCustomFaces() {
+    try {
+        const raw = JSON.parse(localStorage.getItem('custom_faces') || '{}');
+        return Object.entries(raw)
+            .filter(([, arrs]) => Array.isArray(arrs) && arrs.length)
+            .map(([label, arrs]) => new faceapi.LabeledFaceDescriptors(
+                label, arrs.map(a => new Float32Array(a))
+            ));
+    } catch (e) { return []; }
+}
+
+async function rebuildFaceMatcher() {
+    const all = [...baseDescriptors, ...loadCustomFaces()];
+    faceMatcher = all.length ? new faceapi.FaceMatcher(all, 0.5) : null;
+    registeredDescriptors = all;
+}
+
 async function enrollNewFace() {
-    if (!currentUser || currentUser.role !== 'admin') {
-        showToast("⛔ Access Denied: Admin role required for Biometric Enrollment.", "error");
-        return;
-    }
-
-    const name = prompt("Enter full name for new biometric enrollment:");
+    const name = prompt("Enter name for new face enrollment:");
     if (!name || !name.trim()) return;
     const label = name.trim();
 
@@ -320,48 +189,38 @@ async function enrollNewFace() {
         return;
     }
 
-    showToast(`📸 Enrolling ${label} — Look directly at camera...`, "warning");
+    showToast(`📸 Enrolling ${label} — face the camera steadily...`, "warning");
     const samples = [];
     for (let i = 0; i < 6; i++) {
         try {
             const det = await faceapi
                 .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.25 }))
                 .withFaceLandmarks().withFaceDescriptor();
-            if (det && det.descriptor) {
-                samples.push(Array.from(det.descriptor));
-            }
+            if (det) samples.push(Array.from(det.descriptor));
         } catch (e) { }
         await new Promise(r => setTimeout(r, 350));
     }
 
     if (samples.length < 3) {
-        showToast(`❌ Enrollment failed — captured ${samples.length}/6 samples. Adjust lighting and retry.`, "error");
+        showToast(`❌ Enrollment failed — only ${samples.length}/6 captures. Improve lighting & position, try again.`, "error");
         return;
     }
 
-    const token = sessionStorage.getItem('nexus_token');
     try {
-        const res = await fetch(`${API_BASE_URL}/api/biometrics/enroll`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({ name: label, descriptors: samples, role: 'Student' })
-        });
-        const data = await res.json();
-        if (data.success) {
-            showToast(`✅ ${label} enrolled securely on server (${samples.length} vectors)!`, "success");
-            speak(`${label} enrolled successfully on server database`);
-        } else {
-            showToast(data.error || "Enrollment failed on server.", "error");
-        }
+        const store = JSON.parse(localStorage.getItem('custom_faces') || '{}');
+        store[label] = samples;
+        localStorage.setItem('custom_faces', JSON.stringify(store));
     } catch (e) {
-        showToast("Network error saving biometric to server.", "error");
+        showToast("Storage error during enrollment!", "error");
+        return;
     }
+
+    await rebuildFaceMatcher();
+    showToast(`✅ ${label} enrolled with ${samples.length} biometric samples!`, "success");
+    speak(`${label} enrolled successfully`);
 }
 
-// 📐 Geometry & Liveness Check (Blink / Eye Aspect Ratio)
+// 📐 Geometry quality gate — face must be close enough to analyze
 function hasValidGeometry(landmarks) {
     if (!landmarks) return false;
     const leftEye = landmarks.getLeftEye();
@@ -371,6 +230,12 @@ function hasValidGeometry(landmarks) {
     return eyeDistance > 12;
 }
 
+// ============================================================
+// 🛡️ REAL Anti-Spoofing: Blink Liveness via Eye Aspect Ratio
+// A photo keeps EAR perfectly constant — a live face blinks and
+// its landmarks micro-jitter. Tracks follow faces by centroid,
+// so normal movement never resets blink state.
+// ============================================================
 const livenessTracks = [];
 
 function pointDist(a, b) {
@@ -385,350 +250,233 @@ function eyeAspectRatio(eye) {
     return (v1 + v2) / (2 * h);
 }
 
-function updateLiveness(box, landmarks) {
-    if (!landmarks) return false;
-    const leftEye = landmarks.getLeftEye();
-    const rightEye = landmarks.getRightEye();
-    if (!leftEye || !rightEye || leftEye.length < 6 || rightEye.length < 6) return false;
-
-    const ear = (eyeAspectRatio(leftEye) + eyeAspectRatio(rightEye)) / 2;
-    const cx = box.x + box.width / 2;
-    const cy = box.y + box.height / 2;
-    const now = Date.now();
-
-    let track = livenessTracks.find(t => Math.hypot(t.x - cx, t.y - cy) < Math.max(box.width, box.height) * 0.6);
-    if (!track) {
-        track = {
-            id: Math.random().toString(36).slice(2, 7),
-            x: cx, y: cy,
-            history: [],
-            blinkCount: 0,
-            inBlink: false,
-            verifiedAt: 0
-        };
-        livenessTracks.push(track);
-        if (livenessTracks.length > 8) livenessTracks.shift();
-    }
-
-    track.x = cx;
-    track.y = cy;
-    track.history.push({ t: now, ear });
-    track.history = track.history.filter(h => now - h.t < 2500);
-
-    const BLINK_THRESH = 0.22;
-    const OPEN_THRESH = 0.27;
-
-    if (ear < BLINK_THRESH && !track.inBlink) {
-        track.inBlink = true;
-    } else if (ear > OPEN_THRESH && track.inBlink) {
-        track.inBlink = false;
-        track.blinkCount++;
-        track.verifiedAt = now;
-    }
-
-    const ears = track.history.map(h => h.ear);
-    const earMin = Math.min(...ears);
-    const earMax = Math.max(...ears);
-    const variance = earMax - earMin;
-
-    return (now - track.verifiedAt < 3000) || (track.blinkCount >= 1 && variance > 0.05);
+function earStdDev(history) {
+    if (history.length < 8) return 0;
+    const mean = history.reduce((a, b) => a + b, 0) / history.length;
+    const variance = history.reduce((a, b) => a + (b - mean) ** 2, 0) / history.length;
+    return Math.sqrt(variance);
 }
 
-// ============================================================
-// 🛡️ SERVER-DRIVEN FACE DETECTION & DECISION LOOP
-// ============================================================
-let isLoopRunning = false;
-let loopTimeoutId = null;
+function getLivenessTrack(cx, cy) {
+    const now = Date.now();
+    for (let i = livenessTracks.length - 1; i >= 0; i--) {
+        if (now - livenessTracks[i].lastSeen > 3000) livenessTracks.splice(i, 1);
+    }
+    let best = null, bestDist = 90;
+    for (const t of livenessTracks) {
+        const d = Math.hypot(t.cx - cx, t.cy - cy);
+        if (d < bestDist) { best = t; bestDist = d; }
+    }
+    if (!best) {
+        best = { cx, cy, closed: false, lastBlink: 0, firstSeen: now, lastSeen: now, earHistory: [] };
+        livenessTracks.push(best);
+    }
+    return best;
+}
 
-function detectFaces() {
-    isLoopRunning = true;
-    if (loopTimeoutId) clearTimeout(loopTimeoutId);
+function updateLiveness(box, landmarks) {
+    const now = Date.now();
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    const track = getLivenessTrack(cx, cy);
 
-    const container = document.querySelector('.video-container') || document.querySelector('.scanner-wrapper') || document.getElementById('cameraContainer');
-    const existingCanvas = container?.querySelector('canvas');
+    track.cx = track.cx * 0.5 + cx * 0.5;
+    track.cy = track.cy * 0.5 + cy * 0.5;
+    track.lastSeen = now;
+
+    const left = landmarks.getLeftEye();
+    const right = landmarks.getRightEye();
+    const ear = (eyeAspectRatio(left) + eyeAspectRatio(right)) / 2;
+
+    track.earHistory.push(ear);
+    if (track.earHistory.length > 24) track.earHistory.shift();
+
+    if (ear < 0.22) {
+        track.closed = true;
+    } else if (ear > 0.26 && track.closed) {
+        track.closed = false;
+        track.lastBlink = now; // blink completed → proof of life
+    }
+
+    const blinkLive = track.lastBlink > 0 && (now - track.lastBlink) < 6000;
+    // Fallback: >6s of natural landmark micro-movement also proves life
+    // (a printed photo produces zero EAR variance)
+    const motionLive = (now - track.firstSeen) > 6000 && earStdDev(track.earHistory) > 0.012;
+
+    return blinkLive || motionLive;
+}
+
+// 📸 Capture current frame for WhatsApp threat evidence
+function captureThreatSnapshot() {
+    try {
+        if (!video || !video.videoWidth) return null;
+        const c = document.createElement('canvas');
+        const w = 480;
+        const scale = w / video.videoWidth;
+        c.width = w;
+        c.height = Math.round(video.videoHeight * scale);
+        c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+        return c.toDataURL('image/jpeg', 0.7);
+    } catch (e) { return null; }
+}
+
+// 🛡️ Sci-Fi Vector Mesh Detection Loop
+let detecting = false;
+async function detectFaces() {
+    if (!video) return;
+    const container = document.querySelector('.video-container');
+
+    const existingCanvas = container ? container.querySelector('canvas') : null;
     if (existingCanvas) existingCanvas.remove();
 
-    if (!video) return;
     const canvas = faceapi.createCanvasFromMedia(video);
-    if (container) {
-        container.style.position = 'relative';
-        canvas.style.position = 'absolute';
-        canvas.style.top = '0';
-        canvas.style.left = '0';
-        canvas.style.width = '100%';
-        canvas.style.height = '100%';
-        canvas.style.pointerEvents = 'none';
-        container.append(canvas);
-    }
+    if (container) container.append(canvas);
 
     const displaySize = { width: video.offsetWidth || 640, height: video.offsetHeight || 480 };
     faceapi.matchDimensions(canvas, displaySize);
 
-    async function step() {
-        if (!isLoopRunning) return;
+    setInterval(async () => {
+        if (detecting) return; // prevent overlapping inference passes
+        detecting = true;
+        try {
+            if (video.paused || video.ended || isSystemLocked) return;
 
-        if (video && !video.paused && !video.ended && !isSystemLocked) {
-            try {
-                const detections = await faceapi
-                    .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.28 }))
-                    .withFaceLandmarks()
-                    .withFaceDescriptors();
+            const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.25 }))
+                .withFaceLandmarks().withFaceDescriptors();
 
-                const resizedDetections = faceapi.resizeResults(detections, displaySize);
-                const ctx = canvas.getContext('2d');
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const resizedDetections = faceapi.resizeResults(detections, displaySize);
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-                const livenessEl = document.getElementById('livenessStatus');
+            const livenessEl = document.getElementById('livenessStatus');
 
-                for (const detection of resizedDetections) {
-                    const landmarks = detection.landmarks;
-                    const geometryOk = hasValidGeometry(landmarks);
-                    const isLive = geometryOk && updateLiveness(detection.detection.box, landmarks);
+            resizedDetections.forEach(detection => {
+                const result = faceMatcher
+                    ? faceMatcher.findBestMatch(detection.descriptor)
+                    : { label: 'unknown', distance: 1 };
+                const landmarks = detection.landmarks;
+                const geometryOk = hasValidGeometry(landmarks);
+                const isLive = geometryOk && updateLiveness(detection.detection.box, landmarks);
+                const isKnown = result.label !== 'unknown' && result.distance < 0.5;
 
-                    // 🟢 Render 68-Point Vector Mesh
-                    if (landmarks && landmarks.positions) {
-                        const meshColor = isLive ? "rgba(57, 255, 20, 0.7)" : "rgba(239, 68, 68, 0.9)";
-                        ctx.fillStyle = meshColor;
-                        ctx.strokeStyle = meshColor;
-                        ctx.lineWidth = 0.8;
+                // 🟢 Render 68-Point Vector Mesh
+                if (landmarks && landmarks.positions) {
+                    const meshColor = isLive ? "rgba(57, 255, 20, 0.7)" : "rgba(239, 68, 68, 0.9)";
+                    ctx.fillStyle = meshColor;
+                    ctx.strokeStyle = meshColor;
+                    ctx.lineWidth = 0.8;
 
-                        const positions = landmarks.positions;
-                        positions.forEach(point => {
+                    const positions = landmarks.positions;
+                    positions.forEach(point => {
+                        ctx.beginPath();
+                        ctx.arc(point.x, point.y, 1.5, 0, 2 * Math.PI);
+                        ctx.fill();
+                    });
+
+                    for (let i = 0; i < positions.length - 1; i++) {
+                        if (i % 3 === 0) {
                             ctx.beginPath();
-                            ctx.arc(point.x, point.y, 1.5, 0, 2 * Math.PI);
-                            ctx.fill();
-                        });
-
-                        for (let i = 0; i < positions.length - 1; i++) {
-                            if (i % 3 === 0) {
-                                ctx.beginPath();
-                                ctx.moveTo(positions[i].x, positions[i].y);
-                                ctx.lineTo(positions[i + 1].x, positions[i + 1].y);
-                                ctx.stroke();
-                            }
-                        }
-                    }
-
-                    // 🚀 Send vector descriptor to Node.js Server Decision Engine
-                    let serverDecision = { decision: 'UNAUTHORIZED', label: 'unknown', distance: '1.00', message: 'Scanning...' };
-                    try {
-                        const response = await fetch(`${API_BASE_URL}/api/biometrics/verify`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                descriptor: Array.from(detection.descriptor),
-                                isLive: isLive
-                            })
-                        });
-                        serverDecision = await response.json();
-                    } catch (e) {
-                        serverDecision = { decision: 'UNAUTHORIZED', label: 'unknown', distance: '-', message: 'Server Offline' };
-                    }
-
-                    // 🎨 Render UI from Server's Strict Decision
-                    let boxColor = "#ef4444";
-                    let statusText = serverDecision.message || `UNAUTHORIZED [${serverDecision.distance}]`;
-
-                    if (!geometryOk) {
-                        boxColor = "#f59e0b";
-                        statusText = "TOO FAR — MOVE CLOSER";
-                    } else if (serverDecision.decision === 'GRANTED') {
-                        boxColor = "#39FF14";
-                        statusText = `VERIFIED: ${serverDecision.label.toUpperCase()} [${serverDecision.distance}]`;
-
-                        if (serverDecision.newlyMarked) {
-                            counts.present++;
-                            if (serverDecision.status === 'Late') counts.late++;
-                            updateStatsUI();
-                            addTableRow(serverDecision.label, serverDecision.time || new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}), serverDecision.status || 'Present');
-                            speak(`Welcome ${serverDecision.label}, entry verified`);
-                        }
-                    } else if (serverDecision.decision === 'SPOOF_BLOCKED') {
-                        boxColor = "#f59e0b";
-                        statusText = `BLINK TO VERIFY: ${serverDecision.label.toUpperCase()} [${serverDecision.distance}]`;
-                    } else if (serverDecision.decision === 'LOCKED') {
-                        boxColor = "#ef4444";
-                        statusText = "🚨 EMERGENCY LOCKDOWN ACTIVE";
-                    } else {
-                        boxColor = "#ef4444";
-                        statusText = `UNAUTHORIZED SUSPECT [${serverDecision.distance}]`;
-                    }
-
-                    const box = detection.detection.box;
-                    ctx.strokeStyle = boxColor;
-                    ctx.lineWidth = 2;
-                    ctx.strokeRect(box.x, box.y, box.width, box.height);
-
-                    const labelY = Math.max(22, box.y);
-                    ctx.fillStyle = boxColor;
-                    ctx.fillRect(box.x, labelY - 22, box.width, 22);
-
-                    ctx.fillStyle = "#000000";
-                    ctx.font = "bold 10px monospace";
-                    ctx.fillText(statusText, box.x + 4, labelY - 6);
-
-                    if (livenessEl) {
-                        livenessEl.innerText = isLive ? "ACTIVE — BLINK VERIFIED" : "SCANNING LIVENESS...";
-                        livenessEl.className = isLive
-                            ? "text-emerald-400 font-bold"
-                            : "text-amber-400 font-bold animate-pulse";
-                    }
-
-                    const nowTime = Date.now();
-                    if (serverDecision.decision === 'UNAUTHORIZED' && geometryOk) {
-                        if (nowTime - lastThreatTime >= 30000) {
-                            lastThreatTime = nowTime;
-                            counts.unknown++;
-                            updateStatsUI();
-
-                            const isSpoof = !isLive;
-                            const threatMsg = isSpoof
-                                ? "SPOOF ATTACK BLOCKED: Photo/Video replay detected (no blink liveness) at Main Gate!"
-                                : "Unauthorized Suspect Scanned at Main Gate!";
-
-                            addTableRow(
-                                isSpoof ? "Spoof Attempt" : "Unknown Suspect",
-                                new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                                "Denied"
-                            );
-                            triggerThreatUI(threatMsg);
+                            ctx.moveTo(positions[i].x, positions[i].y);
+                            ctx.lineTo(positions[i + 1].x, positions[i + 1].y);
+                            ctx.stroke();
                         }
                     }
                 }
-            } catch (e) {
-                console.warn("Inference frame skip:", e);
-            }
-        }
 
-        if (isLoopRunning) {
-            loopTimeoutId = setTimeout(step, 250);
-        }
-    }
-
-    step();
-}
-
-// 🔊 Audio Voice Synthesis (Safely Debounced)
-let lastSpokenText = "";
-let lastSpokenTime = 0;
-function speak(text) {
-    if (!text || !('speechSynthesis' in window)) return;
-    const now = Date.now();
-    if (text === lastSpokenText && now - lastSpokenTime < 15000) return;
-    if (now - lastSpokenTime < 4000) return;
-
-    lastSpokenText = text;
-    lastSpokenTime = now;
-    try {
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 1.0;
-        window.speechSynthesis.speak(utterance);
-    } catch (e) {}
-}
-
-// 📊 Chart.js Live Analytics
-function initStatsChart() {
-    const canvas = document.getElementById('statsChart');
-    if (!canvas || typeof Chart === 'undefined') return;
-
-    const ctx = canvas.getContext('2d');
-    if (statsChartInstance) statsChartInstance.destroy();
-
-    statsChartInstance = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: ['Present', 'Late', 'Threats'],
-            datasets: [{
-                data: [counts.present || 0, counts.late || 0, counts.unknown || 0],
-                backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
-                borderColor: '#0f172a',
-                borderWidth: 2,
-                hoverOffset: 4
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            cutout: '72%',
-            plugins: {
-                legend: {
-                    position: 'bottom',
-                    labels: { color: '#94a3b8', font: { size: 9, family: 'monospace' }, boxWidth: 10, padding: 6 }
+                // Status Badges & Colors
+                const dist = typeof result.distance === 'number' ? result.distance.toFixed(2) : '-';
+                let boxColor, statusText;
+                if (!geometryOk) {
+                    boxColor = "#f59e0b";
+                    statusText = "TOO FAR — MOVE CLOSER";
+                } else if (isKnown && isLive) {
+                    boxColor = "#39FF14";
+                    statusText = `VERIFIED: ${result.label.toUpperCase()} [${dist}]`;
+                } else if (isKnown && !isLive) {
+                    boxColor = "#f59e0b";
+                    statusText = `BLINK TO VERIFY: ${result.label.toUpperCase()} [${dist}]`;
+                } else if (isLive) {
+                    boxColor = "#ef4444";
+                    statusText = `UNAUTHORIZED SUSPECT [${dist}]`;
+                } else {
+                    boxColor = "#ef4444";
+                    statusText = `🚨 SPOOF BLOCKED [${dist}]`;
                 }
-            }
+
+                const box = detection.detection.box;
+                ctx.strokeStyle = boxColor;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+                ctx.fillStyle = boxColor;
+                ctx.fillRect(box.x, box.y - 22, box.width, 22);
+
+                ctx.fillStyle = "#000000";
+                ctx.font = "bold 10px monospace";
+                ctx.fillText(statusText, box.x + 4, box.y - 6);
+
+                if (livenessEl) {
+                    livenessEl.innerText = isLive ? "ACTIVE — BLINK VERIFIED" : "SCANNING LIVENESS...";
+                    livenessEl.className = isLive
+                        ? "text-emerald-400 font-bold"
+                        : "text-amber-400 font-bold animate-pulse";
+                }
+
+                // Handle Unknown / Spoof Suspects (evidence snapshot attached)
+                if (result.label === 'unknown' && geometryOk && !unknownDetected) {
+                    counts.unknown++;
+                    updateStatsUI();
+                    unknownDetected = true;
+
+                    const isSpoof = !isLive;
+                    const threatMsg = isSpoof
+                        ? "SPOOF ATTACK BLOCKED: Photo/Video replay detected (no blink liveness) at Main Gate!"
+                        : "Unauthorized Suspect Scanned at Main Gate!";
+
+                    addTableRow(
+                        isSpoof ? "Spoof Attempt" : "Unknown Suspect",
+                        new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                        "Denied"
+                    );
+                    triggerThreatUI(threatMsg, captureThreatSnapshot());
+                    setTimeout(() => { unknownDetected = false; }, 30000);
+                }
+
+                // Mark Attendance — only for known + live faces
+                if (isKnown && isLive) {
+                    markAttendance(result.label);
+                }
+            });
+        } catch (e) {
+            console.error("Detection Frame Error:", e);
+        } finally {
+            detecting = false;
         }
-    });
+    }, 250);
 }
 
-function updateStatsChart() {
-    if (!statsChartInstance) return;
-    statsChartInstance.data.datasets[0].data = [counts.present, counts.late, counts.unknown];
-    statsChartInstance.update();
-}
+function markAttendance(name) {
+    if (!name || name.trim() === "") return;
+    name = name.trim();
 
-function updateStatsUI() {
-    const presentEl = document.getElementById('presentStat');
-    const lateEl = document.getElementById('lateStat');
-    const unknownEl = document.getElementById('unknownStat');
+    if (!markedAttendance.has(name)) {
+        markedAttendance.add(name);
+        localStorage.setItem('attendance_records', JSON.stringify(Array.from(markedAttendance)));
 
-    if (presentEl) presentEl.innerText = counts.present;
-    if (lateEl) lateEl.innerText = counts.late;
-    if (unknownEl) unknownEl.innerText = counts.unknown;
+        const now = new Date();
+        const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-    const mgPres = document.getElementById('mgPresent');
-    const mgLate = document.getElementById('mgLate');
-    const mgThreat = document.getElementById('mgThreats');
-    if (mgPres) mgPres.innerText = counts.present;
-    if (mgLate) mgLate.innerText = counts.late;
-    if (mgThreat) mgThreat.innerText = counts.unknown;
+        let isLate = now.getHours() >= 9;
+        counts.present++;
+        if (isLate) counts.late++;
+        updateStatsUI();
 
-    updateStatsChart();
-}
+        addTableRow(name, timeString, isLate ? "Late" : "Present");
+        showToast(`Logged: ${name}`, "success");
+        speak(`Welcome ${name}`);
 
-function addTableRow(name, time, status) {
-    const logContainer = document.getElementById('attendanceBody');
-    if (!logContainer) return;
-
-    const row = document.createElement('div');
-    row.className = "log-row flex justify-between items-center py-1.5 border-b border-slate-800/50 text-xs";
-
-    const isBad = status === "Late" || status === "Denied" || status === "Leave";
-    const pillClass = isBad ? "bg-rose-950/80 text-rose-400 border border-rose-500/20" : "bg-emerald-950/80 text-emerald-400 border border-emerald-500/20";
-    const badge = status === "Leave" ? "● Leave" : (isBad ? "● Deny" : "● Pres");
-
-    row.innerHTML = `
-        <span class="text-slate-200 font-medium">${name}</span>
-        <span class="text-slate-400 text-[11px]">${time}</span>
-        <div class="text-right"><span class="text-[10px] px-2 py-0.5 rounded-full ${pillClass}">${badge}</span></div>
-    `;
-    logContainer.insertBefore(row, logContainer.firstChild);
-
-    // Mobile Feed update
-    const mgFeed = document.getElementById('mgFeed');
-    if (mgFeed) {
-        if (mgFeed.innerHTML.includes('Scanning for activity')) mgFeed.innerHTML = '';
-        const mgRow = document.createElement('div');
-        mgRow.className = "flex justify-between items-center bg-slate-800/40 p-2 rounded border border-slate-700/50 text-[11px] mb-1.5";
-        mgRow.innerHTML = `
-            <div class="flex items-center gap-2">
-                <div class="w-1.5 h-1.5 rounded-full ${isBad ? 'bg-rose-500' : 'bg-emerald-500'} animate-pulse"></div>
-                <span class="${isBad ? 'text-rose-400 font-bold' : 'text-emerald-300'}">${name}</span>
-            </div>
-            <div class="text-slate-500 text-[9px]">${time}</div>
-        `;
-        mgFeed.insertBefore(mgRow, mgFeed.firstChild);
+        sendWhatsAppNotification(name, isLate ? "Late" : "Present");
     }
-}
-
-// 🚨 Threat Handling
-function captureThreatSnapshot() {
-    if (!video || video.paused || video.ended) return null;
-    const c = document.createElement('canvas');
-    c.width = video.videoWidth || 640;
-    c.height = video.videoHeight || 480;
-    const ctx = c.getContext('2d');
-    ctx.drawImage(video, 0, 0, c.width, c.height);
-    return c.toDataURL('image/jpeg', 0.85);
 }
 
 function triggerThreatUI(message, snapshot = null) {
@@ -739,56 +487,30 @@ function triggerThreatUI(message, snapshot = null) {
         details.innerText = message;
         banner.classList.remove('hidden');
         speak("Security Alert! Unauthorized Person Detected");
+
         setTimeout(() => {
-            if (banner) banner.classList.add('hidden');
-        }, 5000);
+            banner.classList.add('hidden');
+        }, 30000);
     }
 
     fetch(`${API_BASE_URL}/api/threat-alert`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: message, snapshot })
-    }).catch(e => console.warn("Threat dispatch warning:", e));
+    }).catch(err => console.log("Threat API offline"));
 }
 
 function triggerEmergencyAlert() {
-    if (!currentUser || !['guard', 'admin'].includes(currentUser.role)) {
-        showToast("⛔ Access Denied: Guard or Admin role required for Emergency Alert.", "error");
-        return;
-    }
     if (confirm("DANGER: Trigger Campus Emergency WhatsApp Red Alert?")) {
-        triggerThreatUI("PANIC BUTTON TRIGGERED BY OPERATOR", captureThreatSnapshot());
+        triggerThreatUI("PANIC BUTTON TRIGGERED BY SECURITY ADMIN", captureThreatSnapshot());
         showToast("Emergency WhatsApp Broadcast Fired!", "error");
     }
 }
 
-async function restoreLogsFromServer() {
-    try {
-        const res = await fetch(`${API_BASE_URL}/api/logs`);
-        const data = await res.json();
-        const logContainer = document.getElementById('attendanceBody');
-        if (logContainer) logContainer.innerHTML = "";
-        
-        if (data.attendance) {
-            const rows = (data.attendance || []).slice().reverse();
-            rows.forEach(r => addTableRow(r.name, r.time, r.status));
-        }
-        if (data.counts) {
-            counts.present = data.counts.present || 0;
-            counts.late = data.counts.late || 0;
-        }
-        counts.unknown = data.threats || 0;
-        isSystemLocked = data.locked || false;
-        updateStatsUI();
-    } catch (e) {}
-}
-
-// 🎫 Gate Pass Verification
+// ============================================================
+// 🎫 Gate Pass Verification (Guard Console)
+// ============================================================
 function openPassModal() {
-    if (!currentUser || !['guard', 'admin'].includes(currentUser.role)) {
-        showToast("⛔ Access Denied: Guard or Admin role required.", "error");
-        return;
-    }
     const modal = document.getElementById('passModal');
     const result = document.getElementById('passResult');
     const input = document.getElementById('passCodeInput');
@@ -820,7 +542,7 @@ async function verifyGatePass(event) {
             if (result) result.innerHTML = `
                 <div class="bg-emerald-950/80 border border-emerald-500 text-emerald-300 p-3 rounded text-center">
                     <div class="text-lg font-bold">✅ ENTRY GRANTED</div>
-                    <div class="text-xs mt-1">${data.visitor} — ${data.purpose || 'Visitor'}</div>
+                    <div class="text-xs mt-1">${data.visitor} — ${data.purpose}</div>
                 </div>`;
             speak("Gate pass verified. Entry granted.");
         } else {
@@ -832,16 +554,17 @@ async function verifyGatePass(event) {
             speak("Gate pass rejected.");
         }
     } catch (err) {
-        if (result) result.innerHTML = `<div class="bg-rose-950/80 border border-rose-500 text-rose-300 p-3 rounded text-center text-xs">❌ Backend offline</div>`;
+        if (result) result.innerHTML = `
+            <div class="bg-rose-950/80 border border-rose-500 text-rose-300 p-3 rounded text-center text-xs">
+                ❌ Backend offline — verify server is running on port 3000.
+            </div>`;
     }
 }
 
-// 👤 Visitor Request Modal
+// ============================================================
+// 👤 Visitor Flow
+// ============================================================
 function openVisitorModal() {
-    if (!currentUser || !['guard', 'admin'].includes(currentUser.role)) {
-        showToast("⛔ Access Denied: Guard or Admin role required.", "error");
-        return;
-    }
     const modal = document.getElementById('visitorModal');
     if (modal) modal.classList.remove('hidden');
 }
@@ -867,153 +590,411 @@ async function sendVisitorRequest(event) {
     try {
         const response = await fetch(`${API_BASE_URL}/api/visitor-request`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
             body: JSON.stringify({ visitorName, cnic, hostPhone, purpose })
         });
+
         const data = await response.json();
 
         if (response.ok && data.success) {
             alert('✅ Success! Request Host WhatsApp par dispatch ho gayi.');
             closeVisitorModal();
         } else {
-            alert('❌ Error: ' + (data.error || 'Request failed.'));
+            alert('❌ Backend Error: ' + (data.error || 'Request fail ho gayi.'));
         }
     } catch (err) {
-        alert('❌ Network Alert: Check node server.js running on Port 3000.');
+        console.error('API Handshake Error:', err);
+        alert('❌ Network Alert: Check karein node server.js running hai on Port 3000!');
     }
 }
 
-// ⌨️ Manual Attendance Modal Handlers
-function openManualModal() {
-    if (!currentUser || !['guard', 'admin'].includes(currentUser.role)) {
-        showToast("⛔ Access Denied: Guard or Admin role required.", "error");
-        return;
+function markLeaveEntry() {
+    const name = prompt("Enter Student Name for Leave:");
+    if (name && name.trim() !== "") {
+        const studentName = name.trim();
+        const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        addTableRow(studentName, timeString, "Leave");
+        showToast(`${studentName} marked on Leave`, "warning");
+        sendWhatsAppNotification(studentName, "Leave");
     }
-    const modal = document.getElementById('manualModal');
-    const input = document.getElementById('manualPersonName');
-    if (input) input.value = "";
-    if (modal) modal.classList.remove('hidden');
 }
 
-function closeManualModal() {
-    const modal = document.getElementById('manualModal');
-    if (modal) modal.classList.add('hidden');
+function updateStatsUI() {
+    if (document.getElementById('presentStat')) document.getElementById('presentStat').innerText = counts.present;
+    if (document.getElementById('lateStat')) document.getElementById('lateStat').innerText = counts.late;
+    if (document.getElementById('unknownStat')) document.getElementById('unknownStat').innerText = counts.unknown;
+    
+    // Mobile View updates
+    if (document.getElementById('mgPresent')) document.getElementById('mgPresent').innerText = counts.present;
+    if (document.getElementById('mgLate')) document.getElementById('mgLate').innerText = counts.late;
+    if (document.getElementById('mgThreats')) document.getElementById('mgThreats').innerText = counts.unknown;
+
+    updateStatsChart();
 }
 
-async function submitManualEntry(event) {
-    if (event) event.preventDefault();
-    const nameInput = document.getElementById('manualPersonName');
-    const statusInput = document.getElementById('manualPersonStatus');
-    const studentName = (nameInput?.value || '').trim();
-    const statusType = statusInput?.value || 'Present';
+// 📊 Restore real logs from server (MongoDB / Hybrid Memory) on load
+async function restoreLogsFromServer() {
+    const logContainer = document.getElementById('attendanceBody');
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/logs`);
+        const data = await res.json();
 
-    if (!studentName) return;
+        if (logContainer) logContainer.innerHTML = "";
+        const rows = (data.attendance || []).slice().reverse(); // oldest first, insertBefore flips order
+        rows.forEach(r => addTableRow(r.name, r.time, r.status));
 
-    const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    counts.present++;
-    if (statusType === 'Late') counts.late++;
+        counts.present = data.counts?.present || 0;
+        counts.late = data.counts?.late || 0;
+        counts.unknown = data.threats || 0;
+        updateStatsUI();
+
+        // Server is the authority — rebuild marked set from server records only,
+        // so stale browser data can't block fresh attendance
+        markedAttendance = new Set();
+        (data.attendance || [])
+            .filter(r => ['Present', 'Late'].includes(r.status))
+            .forEach(r => markedAttendance.add(r.name));
+        localStorage.setItem('attendance_records', JSON.stringify(Array.from(markedAttendance)));
+    } catch (e) {
+        // server offline → local fallback
+        displaySavedData();
+    }
+}
+
+function displaySavedData() {
+    const logContainer = document.getElementById('attendanceBody');
+    if (!logContainer) return;
+    logContainer.innerHTML = "";
+
+    counts.present = 0;
+    counts.late = 0;
+
+    markedAttendance.forEach(name => {
+        addTableRow(name, "--:--", "Present");
+        counts.present++;
+    });
     updateStatsUI();
-    addTableRow(studentName, timeString, statusType);
-    showToast(`${studentName} marked ${statusType} (Manual)`, "success");
-    closeManualModal();
-
-    try {
-        await fetch(`${API_BASE_URL}/api/attendance`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: studentName, status: statusType, time: timeString })
-        });
-    } catch (e) {
-        console.warn("Could not sync attendance to server:", e);
-    }
 }
 
-// 🏖️ Mark Leave Modal Handlers
-function openLeaveModal() {
-    if (!currentUser || currentUser.role !== 'admin') {
-        showToast("⛔ Access Denied: Admin role required to Mark Leave.", "error");
-        return;
-    }
-    const modal = document.getElementById('leaveModal');
-    const input = document.getElementById('leavePersonName');
-    if (input) input.value = "";
-    if (modal) modal.classList.remove('hidden');
-}
+function addTableRow(name, time, status) {
+    const logContainer = document.getElementById('attendanceBody');
+    if (!logContainer) return;
 
-function closeLeaveModal() {
-    const modal = document.getElementById('leaveModal');
-    if (modal) modal.classList.add('hidden');
-}
+    const row = document.createElement('div');
+    row.className = "log-row flex justify-between items-center py-1.5 border-b border-slate-800/50 text-xs";
 
-async function submitLeaveEntry(event) {
-    if (event) event.preventDefault();
-    const nameInput = document.getElementById('leavePersonName');
-    const studentName = (nameInput?.value || '').trim();
+    const isBad = status === "Late" || status === "Denied" || status === "Leave";
+    const pillClass = isBad ? "bg-rose-950/80 text-rose-400 border border-rose-500/20" : "bg-emerald-950/80 text-emerald-400 border border-emerald-500/20";
+    const badge = status === "Leave" ? "● Leave" : (isBad ? "● Deny" : "● Pres");
 
-    if (!studentName) return;
+    row.innerHTML = `
+        <span class="text-slate-200 font-medium">${name}</span>
+        <span class="text-slate-400 text-[11px]">${time}</span>
+        <div class="text-right"><span class="text-[10px] px-2 py-0.5 rounded-full ${pillClass}">${badge}</span></div>
+    `;
+    logContainer.insertBefore(row, logContainer.firstChild);
 
-    const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    addTableRow(studentName, timeString, "Leave");
-    showToast(`${studentName} marked on Leave`, "warning");
-    closeLeaveModal();
-
-    try {
-        await fetch(`${API_BASE_URL}/api/attendance`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: studentName, status: 'Leave', time: timeString })
-        });
-    } catch (e) {
-        console.warn("Could not sync leave to server:", e);
+    // Mobile Feed Update
+    const mgFeed = document.getElementById('mgFeed');
+    if (mgFeed) {
+        // Remove empty state message if exists
+        if (mgFeed.innerHTML.includes('Scanning for activity')) {
+            mgFeed.innerHTML = '';
+        }
+        const mgRow = document.createElement('div');
+        mgRow.className = "flex justify-between items-center bg-slate-800/40 p-2 rounded border border-slate-700/50 text-[11px] mb-1.5";
+        mgRow.innerHTML = `
+            <div class="flex items-center gap-2">
+                <div class="w-1.5 h-1.5 rounded-full ${isBad ? 'bg-rose-500' : 'bg-emerald-500'} animate-pulse"></div>
+                <span class="${isBad ? 'text-rose-400 font-bold' : 'text-emerald-300'}">${name}</span>
+            </div>
+            <div class="text-slate-500 text-[9px]">${time}</div>
+        `;
+        mgFeed.insertBefore(mgRow, mgFeed.firstChild);
     }
 }
 
 function manualEntry() {
-    openManualModal();
-}
-
-function markLeaveEntry() {
-    openLeaveModal();
+    const name = prompt("Enter Student Name for Manual Entry:");
+    if (name && name.trim() !== "") {
+        markAttendance(name.trim());
+    }
 }
 
 function clearDatabase() {
-    if (!currentUser || currentUser.role !== 'admin') {
-        showToast("⛔ Access Denied: Admin role required to Clear Logs.", "error");
-        return;
+    if (confirm("Are you sure you want to clear local session logs?")) {
+        localStorage.removeItem('attendance_records');
+        markedAttendance.clear();
+        displaySavedData();
+        showToast("Local Session Cleared", "success");
     }
-    if (confirm("Are you sure you want to clear session logs?")) {
-        const logContainer = document.getElementById('attendanceBody');
-        if (logContainer) logContainer.innerHTML = "";
-        counts = { present: 0, late: 0, unknown: 0 };
-        updateStatsUI();
-        showToast("Session logs cleared.", "success");
-    }
+}
+
+function sendWhatsAppNotification(studentName, statusType) {
+    fetch(`${API_BASE_URL}/api/attendance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            name: studentName,
+            status: statusType
+        })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(`WhatsApp ${statusType} Alert Sent!`, "success");
+            }
+        })
+        .catch(err => {
+            console.error("Backend Connection Offline:", err);
+        });
 }
 
 function downloadCSV() {
-    window.location.href = `${API_BASE_URL}/api/export/excel`;
+    let csv = "Name,Time,Status\n";
+    document.querySelectorAll(".log-row").forEach(row => {
+        const spans = row.querySelectorAll("span");
+        if (spans.length >= 3) csv += `${spans[0].innerText},${spans[1].innerText},${spans[2].innerText}\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = window.URL.createObjectURL(blob);
+    a.download = `NexusScan_Report_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
 }
 
-// 🎓 Faculty View
-function accessFacultyView() {
-    if (!currentUser || !['faculty', 'admin'].includes(currentUser.role)) {
-        showToast("⛔ Access Denied: Faculty or Admin role required.", "error");
-        return;
+function speak(text) {
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
     }
-    showToast(`Access Granted: ${currentUser.name} (${currentUser.role.toUpperCase()})`, "success");
-    const container = document.getElementById('facultyControlsContainer');
-    if (container) container.classList.toggle('hidden');
 }
 
-// 🤖 AI Chat Assistant Logic
+// 🔑 Faculty View — server-side password check instead of client-side plaintext
+async function accessFacultyView() {
+    const password = prompt("Enter Faculty Password:");
+    if (!password) return;
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/auth`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password })
+        });
+        const data = await res.json();
+        if (data.success) {
+            sessionStorage.setItem('nx_auth', data.token);
+            showToast("Welcome Prof!", "success");
+            const facultySection = document.getElementById('facultySection');
+            if (facultySection) facultySection.classList.remove('hidden');
+        } else {
+            showToast("Access Denied!", "error");
+        }
+    } catch (e) {
+        showToast("Backend offline — cannot verify!", "error");
+    }
+}
+
+if (document.getElementById('logSearch')) {
+    document.getElementById('logSearch').addEventListener('keyup', function () {
+        let filter = this.value.toUpperCase();
+        document.querySelectorAll(".log-row").forEach(row => {
+            let name = row.querySelector("span").textContent.toUpperCase();
+            row.style.display = name.includes(filter) ? "" : "none";
+        });
+    });
+}
+
+// 🔒 Dynamic Remote Lockdown Polling + Voice Announcement Relay
+setInterval(async () => {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/system-status`);
+        const data = await response.json();
+
+        const videoOverlay = document.getElementById('video');
+        const statusEl = document.getElementById('systemStatus');
+
+        isSystemLocked = data.locked;
+
+        if (isSystemLocked) {
+            if (videoOverlay) videoOverlay.style.filter = "grayscale(100%) brightness(20%)";
+            if (statusEl) statusEl.innerText = "🚨 LOCKDOWN MODE (Remote Override)";
+        } else {
+            if (videoOverlay) videoOverlay.style.filter = "none";
+            if (statusEl && statusEl.innerText.includes("LOCKDOWN")) statusEl.innerText = "AI Processing: Active";
+        }
+
+        // Relay WhatsApp ANNOUNCE broadcasts over local speakers
+        if (data.announcement && data.announcement !== lastAnnouncement) {
+            lastAnnouncement = data.announcement;
+            speak(`Attention please. ${data.announcement}`);
+            showToast(`📢 Broadcast: ${data.announcement}`, "warning");
+        }
+        if (!data.announcement) lastAnnouncement = "";
+    } catch (e) { }
+}, 1500);
+
+// ============================================================
+// 📊 Live Analytics Chart (Chart.js Donut)
+// ============================================================
+let statsChartInstance = null;
+
+function initStatsChart() {
+    const canvas = document.getElementById('statsChart');
+    if (!canvas || typeof Chart === 'undefined') return;
+
+    Chart.defaults.color = '#94a3b8';
+    statsChartInstance = new Chart(canvas, {
+        type: 'doughnut',
+        data: {
+            labels: ['Present', 'Late', 'Threats'],
+            datasets: [{
+                data: [0, 0, 0],
+                backgroundColor: [
+                    'rgba(52, 211, 153, 0.85)',
+                    'rgba(251, 191, 36, 0.85)',
+                    'rgba(239, 68, 68, 0.85)'
+                ],
+                borderColor: [
+                    'rgba(52, 211, 153, 1)',
+                    'rgba(251, 191, 36, 1)',
+                    'rgba(239, 68, 68, 1)'
+                ],
+                borderWidth: 1.5,
+                hoverOffset: 6
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '68%',
+            animation: { duration: 600, easing: 'easeInOutQuart' },
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        font: { size: 9, family: 'Poppins' },
+                        color: '#94a3b8',
+                        padding: 8,
+                        boxWidth: 10
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => ` ${ctx.label}: ${ctx.raw}`
+                    }
+                }
+            }
+        }
+    });
+}
+
+function updateStatsChart() {
+    if (!statsChartInstance) return;
+    const present = counts.present - counts.late; // pure present (not late)
+    const late = counts.late;
+    const threats = counts.unknown;
+    const total = present + late + threats;
+    statsChartInstance.data.datasets[0].data = total > 0
+        ? [present, late, threats]
+        : [1, 0, 0]; // show empty state gracefully
+    statsChartInstance.data.labels = total > 0
+        ? ['Present', 'Late', 'Threats']
+        : ['No Data Yet'];
+    if (total === 0) {
+        statsChartInstance.data.datasets[0].backgroundColor = ['rgba(30,41,59,0.8)'];
+        statsChartInstance.data.datasets[0].borderColor = ['rgba(51,65,85,1)'];
+    } else {
+        statsChartInstance.data.datasets[0].backgroundColor = [
+            'rgba(52, 211, 153, 0.85)',
+            'rgba(251, 191, 36, 0.85)',
+            'rgba(239, 68, 68, 0.85)'
+        ];
+        statsChartInstance.data.datasets[0].borderColor = [
+            'rgba(52, 211, 153, 1)',
+            'rgba(251, 191, 36, 1)',
+            'rgba(239, 68, 68, 1)'
+        ];
+    }
+    statsChartInstance.update();
+}
+
+// ============================================================
+// 🤖 AI Chat Panel
+// ============================================================
 function openAiPanel() {
-    const p = document.getElementById('aiChatPanel');
-    if (p) p.classList.remove('hidden');
+    const panel = document.getElementById('aiChatPanel');
+    if (panel) {
+        panel.classList.remove('hidden');
+        setTimeout(() => document.getElementById('aiChatInput')?.focus(), 100);
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }
 }
 
 function closeAiPanel() {
-    const p = document.getElementById('aiChatPanel');
-    if (p) p.classList.add('hidden');
+    const panel = document.getElementById('aiChatPanel');
+    if (panel) panel.classList.add('hidden');
+}
+
+// Close panel when clicking backdrop
+document.addEventListener('click', (e) => {
+    const panel = document.getElementById('aiChatPanel');
+    if (panel && e.target === panel) closeAiPanel();
+});
+
+function appendAiMessage(text, sender = 'ai', source = 'local-ai') {
+    const container = document.getElementById('aiChatMessages');
+    if (!container) return;
+
+    const isAi = sender === 'ai';
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `flex gap-2 ${isAi ? '' : 'flex-row-reverse'}`;
+
+    const sourceLabel = source === 'gemini'
+        ? '<span class="text-indigo-400">Gemini AI</span>'
+        : '<span class="text-slate-600">Smart AI</span>';
+
+    if (isAi) {
+        msgDiv.innerHTML = `
+            <div class="w-6 h-6 rounded-full bg-indigo-700 flex-shrink-0 flex items-center justify-center text-[10px]">🤖</div>
+            <div class="bg-indigo-950/60 border border-indigo-800/40 rounded-xl rounded-tl-none px-3 py-2 text-slate-300 max-w-[85%] text-xs">
+                ${text}
+                <div class="text-[9px] mt-1 text-slate-600">${sourceLabel} · ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+            </div>`;
+    } else {
+        msgDiv.innerHTML = `
+            <div class="bg-slate-800/80 border border-slate-700/40 rounded-xl rounded-tr-none px-3 py-2 text-slate-200 max-w-[85%] text-xs">
+                ${text}
+                <div class="text-[9px] mt-1 text-slate-500">You · ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+            </div>
+            <div class="w-6 h-6 rounded-full bg-slate-700 flex-shrink-0 flex items-center justify-center text-[10px]">👮</div>`;
+    }
+
+    container.appendChild(msgDiv);
+    container.scrollTop = container.scrollHeight;
+}
+
+function appendTypingIndicator() {
+    const container = document.getElementById('aiChatMessages');
+    if (!container) return null;
+    const typingDiv = document.createElement('div');
+    typingDiv.id = 'aiTypingIndicator';
+    typingDiv.className = 'flex gap-2';
+    typingDiv.innerHTML = `
+        <div class="w-6 h-6 rounded-full bg-indigo-700 flex-shrink-0 flex items-center justify-center text-[10px]">🤖</div>
+        <div class="bg-indigo-950/60 border border-indigo-800/40 rounded-xl rounded-tl-none px-4 py-3">
+            <div class="flex gap-1 items-center">
+                <span class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style="animation-delay:0ms"></span>
+                <span class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style="animation-delay:150ms"></span>
+                <span class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style="animation-delay:300ms"></span>
+            </div>
+        </div>`;
+    container.appendChild(typingDiv);
+    container.scrollTop = container.scrollHeight;
+    return typingDiv;
 }
 
 async function sendAiMessage() {
@@ -1023,6 +1004,7 @@ async function sendAiMessage() {
 
     input.value = '';
     appendAiMessage(question, 'user');
+
     const typingEl = appendTypingIndicator();
 
     try {
@@ -1032,77 +1014,74 @@ async function sendAiMessage() {
             body: JSON.stringify({ question })
         });
         const data = await response.json();
+
         if (typingEl) typingEl.remove();
 
         if (data.success) {
             appendAiMessage(data.answer, 'ai', data.source);
             speak(data.answer);
+
+            // Update source badge
+            const badge = document.getElementById('aiSourceBadge');
+            if (badge) {
+                badge.textContent = data.source === 'gemini'
+                    ? '✨ Gemini AI • Active'
+                    : '🧠 Smart Local AI • Active';
+            }
         } else {
-            appendAiMessage('Error contacting AI engine.', 'ai');
+            appendAiMessage('Sorry, I encountered an error. Please check if the backend server is running on port 3000.', 'ai');
         }
     } catch (err) {
         if (typingEl) typingEl.remove();
-        appendAiMessage('Backend server unreachable on port 3000.', 'ai');
+        appendAiMessage('⚠️ Cannot reach backend server. Make sure <b>node server.js</b> is running on port 3000.', 'ai');
     }
-}
-
-function appendAiMessage(text, role, source) {
-    const container = document.getElementById('aiChatMessages');
-    if (!container) return;
-
-    const div = document.createElement('div');
-    div.className = "flex gap-2 " + (role === 'user' ? 'justify-end' : 'justify-start');
-
-    if (role === 'user') {
-        div.innerHTML = `<div class="bg-indigo-600 text-white rounded-xl rounded-tr-none px-3 py-2 text-slate-100 max-w-[85%]">${text}</div>`;
-    } else {
-        div.innerHTML = `
-            <div class="w-6 h-6 rounded-full bg-indigo-700 flex-shrink-0 flex items-center justify-center text-[10px]">🤖</div>
-            <div class="bg-indigo-950/60 border border-indigo-800/40 rounded-xl rounded-tl-none px-3 py-2 text-slate-300 max-w-[85%]">
-                ${text}
-                <div class="text-[9px] text-slate-500 mt-1 font-mono">${source === 'gemini' ? 'Google Gemini' : 'Local AI'}</div>
-            </div>
-        `;
-    }
-    container.appendChild(div);
-    container.scrollTop = container.scrollHeight;
-}
-
-function appendTypingIndicator() {
-    const container = document.getElementById('aiChatMessages');
-    if (!container) return null;
-    const div = document.createElement('div');
-    div.className = "flex gap-2 items-center text-slate-500 text-xs italic";
-    div.innerHTML = `🤖 Thinking...`;
-    container.appendChild(div);
-    container.scrollTop = container.scrollHeight;
-    return div;
 }
 
 function startAiVoiceInput() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-        showToast('Speech recognition requires Chrome!', 'error');
+        showToast('⚠️ Speech recognition: Chrome only!', 'error');
         return;
     }
+
+    const voiceBtn = document.getElementById('voiceBtn');
+    const input = document.getElementById('aiChatInput');
+    if (voiceBtn) voiceBtn.classList.add('bg-indigo-500', 'border-indigo-400');
+
     const recognition = new SpeechRecognition();
     recognition.lang = 'en-US';
-    showToast('🎤 Listening... Speak your question', 'warning');
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    showToast('🎤 Listening... Speak your security question!', 'warning');
+
     recognition.start();
 
     recognition.onresult = (event) => {
         const transcript = event.results[0][0].transcript;
-        const input = document.getElementById('aiChatInput');
         if (input) input.value = transcript;
+        if (voiceBtn) voiceBtn.classList.remove('bg-indigo-500', 'border-indigo-400');
         sendAiMessage();
+    };
+
+    recognition.onerror = () => {
+        if (voiceBtn) voiceBtn.classList.remove('bg-indigo-500', 'border-indigo-400');
+        showToast('Mic timeout — click mic again to retry!', 'error');
     };
 }
 
+// Keep old startVoiceAssistant for backward compatibility — now opens panel
+function startVoiceAssistant() { openAiPanel(); }
+
+// ============================================================
 // 📱 Mobile Guard View
+// ============================================================
 function openMobileGuardView() {
     const overlay = document.getElementById('mobileGuardOverlay');
     if (overlay) {
         overlay.classList.remove('hidden');
+        
+        // Mirror the camera stream to mobile view
         const mainVideo = document.getElementById('video');
         const mgVideo = document.getElementById('mgVideo');
         if (mainVideo && mgVideo && mainVideo.srcObject) {
@@ -1116,47 +1095,6 @@ function closeMobileGuardView() {
     if (overlay) overlay.classList.add('hidden');
 }
 
-// Search logs listener
-if (document.getElementById('logSearch')) {
-    document.getElementById('logSearch').addEventListener('keyup', function () {
-        let filter = this.value.toUpperCase();
-        document.querySelectorAll(".log-row").forEach(row => {
-            let name = row.querySelector("span")?.textContent.toUpperCase() || '';
-            row.style.display = name.includes(filter) ? "" : "none";
-        });
-    });
-}
-
-// 🔒 Remote Lockdown & WhatsApp Announcement Polling
-setInterval(async () => {
-    try {
-        const response = await fetch(`${API_BASE_URL}/api/system-status`);
-        const data = await response.json();
-
-        if (data.locked !== previousLockState) {
-            previousLockState = data.locked;
-            isSystemLocked = data.locked;
-            const videoOverlay = document.getElementById('video');
-            const statusEl = document.getElementById('systemStatus');
-
-            if (isSystemLocked) {
-                if (videoOverlay) videoOverlay.style.opacity = "0.25";
-                if (statusEl) statusEl.innerText = "🚨 LOCKDOWN MODE (Remote Override)";
-            } else {
-                if (videoOverlay) videoOverlay.style.opacity = "1";
-                if (statusEl) statusEl.innerText = "Server Decision Engine: ACTIVE";
-            }
-        }
-
-        if (data.announcement && data.announcement !== lastAnnouncement) {
-            lastAnnouncement = data.announcement;
-            speak(`Attention please. ${data.announcement}`);
-            showToast(`📢 Broadcast: ${data.announcement}`, "warning");
-        }
-        if (!data.announcement) lastAnnouncement = "";
-    } catch (e) { }
-}, 3000);
-
 // Kickoff
 if (typeof lucide !== 'undefined') lucide.createIcons();
-initAuth();
+startApp();
