@@ -406,10 +406,10 @@ async function rebuildFaceMatcher() {
 }
 
 async function enrollNewFace() {
-        if (currentUserRole !== 'admin') {
-            showToast('Only administrators can enroll faces.', 'error');
-            return;
-        }
+    if (currentUserRole !== 'admin') {
+        showToast('Only administrators can enroll faces.', 'error');
+        return;
+    }
     const name = await showAppDialog({ title: 'ENROLL NEW FACE', message: 'Enter the person\'s name to create a biometric profile.', inputLabel: 'PERSON NAME', placeholder: 'e.g. Aoun', confirmLabel: 'CONTINUE', cancelLabel: 'CANCEL' });
     if (!name || !name.trim()) return;
     const label = name.trim();
