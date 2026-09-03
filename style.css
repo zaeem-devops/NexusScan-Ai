@@ -119,3 +119,21 @@ canvas {
     opacity: 0;
     pointer-events: none;
 }
+
+.system-dialog-panel { animation: dialogIn 0.18s ease-out; }
+.system-dialog-icon {
+    color: #38bdf8;
+    border-color: rgba(56, 189, 248, 0.35);
+    background: rgba(56, 189, 248, 0.1);
+}
+.system-dialog-panel.is-danger .system-dialog-icon {
+    color: #fb7185;
+    border-color: rgba(244, 63, 94, 0.4);
+    background: rgba(159, 18, 57, 0.25);
+}
+.system-dialog-panel.is-danger #appDialogConfirm { background: #e11d48; color: #fff; }
+.system-dialog-panel.is-danger #appDialogConfirm:hover { background: #f43f5e; }
+@keyframes dialogIn {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}

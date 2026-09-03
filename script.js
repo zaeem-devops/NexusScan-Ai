@@ -127,8 +127,8 @@ function applyRoleView(role) {
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
-function logoutUser() {
-    if (!confirm('Logout from NexusScan AI?')) return;
+async function logoutUser() {
+    if (!await showAppDialog({ title: 'END SESSION', message: 'Logout from NexusScan AI?', confirmLabel: 'LOG OUT', cancelLabel: 'CANCEL', danger: true })) return;
 
     // Clear session
     sessionStorage.removeItem('nx_token');
@@ -246,6 +246,62 @@ function showToast(message, type = 'success') {
     }, 3000);
 }
 
+let activeDialogResolver = null;
+let activeDialogHasInput = false;
+
+function showAppDialog({ title = 'SYSTEM MESSAGE', message = '', inputLabel = '', placeholder = '', confirmLabel = 'OK', cancelLabel = '', danger = false }) {
+    return new Promise(resolve => {
+        const modal = document.getElementById('appDialog');
+        const panel = document.getElementById('appDialogPanel');
+        const titleEl = document.getElementById('appDialogTitle');
+        const messageEl = document.getElementById('appDialogMessage');
+        const form = document.getElementById('appDialogForm');
+        const label = document.getElementById('appDialogInputLabel');
+        const input = document.getElementById('appDialogInput');
+        const cancel = document.getElementById('appDialogCancel');
+        const confirm = document.getElementById('appDialogConfirm');
+        const icon = document.getElementById('appDialogIcon');
+        if (!modal || !panel || !titleEl || !messageEl || !form || !input || !cancel || !confirm) return resolve(false);
+
+        activeDialogResolver = resolve;
+        activeDialogHasInput = Boolean(inputLabel);
+        titleEl.textContent = title;
+        messageEl.textContent = message;
+        form.classList.toggle('hidden', !activeDialogHasInput);
+        label.textContent = inputLabel || 'VALUE';
+        input.value = '';
+        input.placeholder = placeholder;
+        cancel.textContent = cancelLabel || 'CANCEL';
+        cancel.classList.toggle('hidden', !cancelLabel);
+        confirm.textContent = confirmLabel;
+        panel.classList.toggle('is-danger', danger);
+        icon.innerHTML = `<i data-lucide="${danger ? 'triangle-alert' : activeDialogHasInput ? 'user-plus' : 'info'}" class="w-4 h-4"></i>`;
+        modal.classList.remove('hidden');
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+        setTimeout(() => (activeDialogHasInput ? input : confirm).focus(), 0);
+    });
+}
+
+function submitAppDialog(event) {
+    if (event) event.preventDefault();
+    if (!activeDialogResolver) return;
+    const result = activeDialogHasInput ? (document.getElementById('appDialogInput')?.value || '').trim() : true;
+    closeAppDialog(result);
+}
+
+function closeAppDialog(result = false) {
+    const modal = document.getElementById('appDialog');
+    if (modal) modal.classList.add('hidden');
+    const resolver = activeDialogResolver;
+    activeDialogResolver = null;
+    activeDialogHasInput = false;
+    if (resolver) resolver(result);
+}
+
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && activeDialogResolver) closeAppDialog(false);
+});
+
 async function startVideo() {
     const overlay = document.getElementById('cameraOffline');
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
@@ -335,7 +391,7 @@ async function rebuildFaceMatcher() {
 }
 
 async function enrollNewFace() {
-    const name = prompt("Enter name for new face enrollment:");
+    const name = await showAppDialog({ title: 'ENROLL NEW FACE', message: 'Enter the person\'s name to create a biometric profile.', inputLabel: 'PERSON NAME', placeholder: 'e.g. Aoun', confirmLabel: 'CONTINUE', cancelLabel: 'CANCEL' });
     if (!name || !name.trim()) return;
     const label = name.trim();
 
@@ -655,8 +711,8 @@ function triggerThreatUI(message, snapshot = null) {
     }).catch(err => console.log("Threat API offline"));
 }
 
-function triggerEmergencyAlert() {
-    if (confirm("DANGER: Trigger Campus Emergency WhatsApp Red Alert?")) {
+async function triggerEmergencyAlert() {
+    if (await showAppDialog({ title: 'EMERGENCY RED ALERT', message: 'Trigger the campus emergency WhatsApp broadcast now?', confirmLabel: 'TRIGGER ALERT', cancelLabel: 'CANCEL', danger: true })) {
         triggerThreatUI("PANIC BUTTON TRIGGERED BY SECURITY ADMIN", captureThreatSnapshot());
         showToast("Emergency WhatsApp Broadcast Fired!", "error");
     }
@@ -738,7 +794,7 @@ async function sendVisitorRequest(event) {
     const purpose = (document.getElementById('visPurpose')?.value || '').trim();
 
     if (!visitorName || !cnic || !hostPhone || !purpose) {
-        alert('⚠️ Tamam fields fill karein!');
+        await showAppDialog({ title: 'MISSING INFORMATION', message: 'Please complete all visitor fields before dispatching the request.', confirmLabel: 'OK' });
         return;
     }
 
@@ -755,19 +811,19 @@ async function sendVisitorRequest(event) {
         const data = await response.json();
 
         if (response.ok && data.success) {
-            alert('✅ Success! Request Host WhatsApp par dispatch ho gayi.');
+            await showAppDialog({ title: 'REQUEST DISPATCHED', message: 'The visitor request was sent to the host on WhatsApp.', confirmLabel: 'DONE' });
             closeVisitorModal();
         } else {
-            alert('❌ Backend Error: ' + (data.error || 'Request fail ho gayi.'));
+            await showAppDialog({ title: 'BACKEND ERROR', message: data.error || 'The visitor request could not be sent.', confirmLabel: 'CLOSE', danger: true });
         }
     } catch (err) {
         console.error('API Handshake Error:', err);
-        alert('❌ Network Alert: Check karein node server.js running hai on Port 3000!');
+        await showAppDialog({ title: 'NETWORK ALERT', message: 'The server is unavailable. Check that node server.js is running on port 3000.', confirmLabel: 'CLOSE', danger: true });
     }
 }
 
-function markLeaveEntry() {
-    const name = prompt("Enter Student Name for Leave:");
+async function markLeaveEntry() {
+    const name = await showAppDialog({ title: 'MARK LEAVE', message: 'Enter the student name to record a leave entry.', inputLabel: 'STUDENT NAME', placeholder: 'e.g. Maryam', confirmLabel: 'MARK LEAVE', cancelLabel: 'CANCEL' });
     if (name && name.trim() !== "") {
         const studentName = name.trim();
         const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -873,15 +929,15 @@ function addTableRow(name, time, status) {
     }
 }
 
-function manualEntry() {
-    const name = prompt("Enter Student Name for Manual Entry:");
+async function manualEntry() {
+    const name = await showAppDialog({ title: 'MANUAL ATTENDANCE', message: 'Enter the student name for a manual attendance record.', inputLabel: 'STUDENT NAME', placeholder: 'e.g. Safdar', confirmLabel: 'MARK PRESENT', cancelLabel: 'CANCEL' });
     if (name && name.trim() !== "") {
         markAttendance(name.trim());
     }
 }
 
-function clearDatabase() {
-    if (confirm("Are you sure you want to clear local session logs?")) {
+async function clearDatabase() {
+    if (await showAppDialog({ title: 'CLEAR SESSION LOGS', message: 'Are you sure you want to clear local session logs? This cannot be undone.', confirmLabel: 'CLEAR LOGS', cancelLabel: 'CANCEL', danger: true })) {
         localStorage.removeItem('attendance_records');
         markedAttendance.clear();
         displaySavedData();
