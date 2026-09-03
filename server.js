@@ -31,6 +31,11 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: '10mb' }));
+app.use(express.static(path.join(__dirname)));
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 const PORT = process.env.PORT || 3000;
 
@@ -297,7 +302,7 @@ app.post('/api/visitor-request', authenticateToken, authorizeRoles('admin', 'fac
     }
 });
 
-app.post('/api/verify-pass', authenticateToken, authorizeRoles('admin', 'faculty', 'guard'), async (req, res) => {
+app.post('/api/verify-pass', authenticateToken, authorizeRoles('admin', 'guard'), async (req, res) => {
     try {
         const passCode = String((req.body || {}).passCode || '').trim().toUpperCase();
         if (!passCode) return res.status(400).json({ success: false, error: 'Pass code required!' });
@@ -442,8 +447,39 @@ app.get('/api/export/excel', authenticateToken, authorizeRoles('admin', 'faculty
 
 app.post('/api/ask-ai', authenticateToken, authorizeRoles('admin', 'faculty', 'guard'), async (req, res) => {
     try {
-        const { question, context } = req.body || {};
+        const { question } = req.body || {};
         if (!question) return res.status(400).json({ success: false, error: 'Question required!' });
+        const userRole = req.user.role;
+
+        // Strict Admin-only features detection
+        const adminRestrictedRegex = /enroll|biometric|face profile|clear logs?|wipe|database reset|force reboot|reboot|restart server|manage users?|user management|admin controls?|delete records?/i;
+        const exportRestrictedRegex = /export|download (report|excel|log|sheet)|xlsx/i;
+        const gateControlRegex = /lock|unlock|lockdown|panic|red alert|emergency alert|breach trigger/i;
+
+        // 1. RBAC Restriction Checks
+        if (userRole !== 'admin') {
+            if (adminRestrictedRegex.test(question)) {
+                return res.json({
+                    success: true,
+                    answer: '⛔ Access Denied: Biometric face enrollment, log clearing, database reset, reboot, and administrator controls are strictly restricted to Administrators.',
+                    source: 'access-control'
+                });
+            }
+            if (userRole === 'guard' && exportRestrictedRegex.test(question)) {
+                return res.json({
+                    success: true,
+                    answer: '⛔ Access Denied: Log export (.xlsx) is restricted to Administrators and Faculty. Security Guards can monitor gate attendance counts and live events.',
+                    source: 'access-control'
+                });
+            }
+            if (userRole === 'faculty' && gateControlRegex.test(question)) {
+                return res.json({
+                    success: true,
+                    answer: '⛔ Access Denied: Gate emergency controls, remote lockdown commands, and panic triggers are restricted to Security Guards and Administrators.',
+                    source: 'access-control'
+                });
+            }
+        }
 
         const attendance = await getAllAttendance();
         const today = new Date().toDateString();
@@ -453,6 +489,26 @@ app.post('/api/ask-ai', authenticateToken, authorizeRoles('admin', 'faculty', 'g
         const threatCount = await countThreatsToday();
         const recentNames = todayRecords.slice(0, 10).map(r => `${r.name} (${r.status})`).join(', ');
 
+        // Check if asking about capabilities / features / help
+        const isFeaturesQuery = /features?|capabilities|what can (you|i) do|help|commands?|menu|options?/i.test(question);
+        if (isFeaturesQuery) {
+            let roleFeatureAnswer = '';
+            if (userRole === 'guard') {
+                roleFeatureAnswer = `💂 GUARD AUTHORIZED CAPABILITIES:\n1. Check today's gate attendance (${presentCount} present, ${lateCount} late).\n2. Monitor security breach & spoofing alerts (${threatCount} threats today).\n3. Verify digital visitor passes (NX-XXXX).\n4. View live gate status and vitality.\n*Note: Face enrollment, log wipe, and report exports are restricted to administrators.*`;
+            } else if (userRole === 'faculty') {
+                roleFeatureAnswer = `🎓 FACULTY AUTHORIZED CAPABILITIES:\n1. View student attendance totals (${presentCount} present today).\n2. Track late arrivals (${lateCount} late today).\n3. Review attendance logs.\n4. Export attendance records to Excel (.xlsx).\n5. Check system status.\n*Note: Gate biometric enrollment and physical security overrides require administrator authorization.*`;
+            } else {
+                roleFeatureAnswer = `🛡️ ADMINISTRATOR FULL ACCESS:\n1. Biometric face enrollment & profile management.\n2. Session log management and database clearing.\n3. Remote WhatsApp lockdown & release commands (LOCK / UNLOCK).\n4. Live threat telemetry & emergency broadcast.\n5. Excel attendance reporting & full system diagnostics.`;
+            }
+            return res.json({ success: true, answer: roleFeatureAnswer, source: 'rbac-system' });
+        }
+
+        const roleConstraints = userRole === 'guard'
+            ? 'USER IS A SECURITY GUARD. You must ONLY answer regarding gate operations: attendance counts, threats today, gate pass verification, and system status. NEVER mention, offer, or explain how to perform face enrollment, log clearing, force reboot, or Excel export.'
+            : userRole === 'faculty'
+            ? 'USER IS A FACULTY MEMBER. You must ONLY answer regarding academic attendance: total present, late arrivals, log summaries, and Excel export. NEVER discuss guard operations, panic alerts, or administrator overrides.'
+            : 'USER IS AN ADMINISTRATOR. Provide full administrative, diagnostic, and security operational assistance.';
+
         const systemContext = `You are NexusScan AI, an intelligent physical security assistant for a university/organization gate system. Current live data:
 - System Status: ${isSystemLocked ? 'LOCKED (Emergency Lockdown)' : 'ACTIVE & OPERATIONAL'}
 - Present Today: ${presentCount} persons
@@ -461,12 +517,14 @@ app.post('/api/ask-ai', authenticateToken, authorizeRoles('admin', 'faculty', 'g
 - Recent entries: ${recentNames || 'No entries yet'}
 - Current Time: ${new Date().toLocaleTimeString()}
 - Database: ${mongoReady ? 'MongoDB Connected' : 'Hybrid Memory Mode'}
+- Signed-in role: ${userRole}
+ROLE CONSTRAINTS: ${roleConstraints}
 
-Answer the security officer's question concisely (2-3 sentences max). Be professional and direct. If asked about locking/unlocking, explain the WhatsApp command system.`;
+Answer concisely (2-3 sentences max). Be professional and direct. Strict role-based authorization is enforced. If asked about a restricted feature, firmly state that it requires higher-level authorization.`;
 
         if (geminiModel) {
             try {
-                const prompt = `${systemContext}\n\nSecurity Officer's Question: "${question}"`;
+                const prompt = `${systemContext}\n\nUser Question: "${question}"`;
                 const result = await geminiModel.generateContent(prompt);
                 const aiAnswer = result.response.text();
                 return res.json({ success: true, answer: aiAnswer, source: 'gemini' });
@@ -487,21 +545,31 @@ Answer the security officer's question concisely (2-3 sentences max). Be profess
                 ? `⚠️ Alert! ${threatCount} security breach attempts detected today at the main gate. All incidents have been logged and WhatsApp alerts dispatched to security personnel.`
                 : `All security parameters are normal. No unauthorized threats detected at the main gate today. AI anti-spoofing and blink liveness detection are active.`;
         } else if (q.match(/lock|lockdown|shutdown/)) {
-            answer = isSystemLocked
-                ? `System is currently in EMERGENCY LOCKDOWN mode. All face scanning is disabled. Send 'UNLOCK' via WhatsApp to the security number to resume operations.`
-                : `System is fully active. To initiate lockdown, send 'LOCK' command via WhatsApp from an authorized admin number.`;
+            if (userRole === 'faculty') {
+                answer = `The gate system is currently ${isSystemLocked ? 'in EMERGENCY LOCKDOWN' : 'ACTIVE'}. Lockdown controls are restricted to administrators and security guards.`;
+            } else {
+                answer = isSystemLocked
+                    ? `System is currently in EMERGENCY LOCKDOWN mode. All face scanning is disabled. Authorized admins can send 'UNLOCK' via WhatsApp to resume operations.`
+                    : `System is fully active. Authorized admins can send 'LOCK' via WhatsApp to initiate emergency lockdown.`;
+            }
         } else if (q.match(/status|state|running|online/)) {
             answer = `NexusScan AI is fully operational. ${presentCount} present, ${lateCount} late, ${threatCount} threats today. Database: ${mongoReady ? 'MongoDB Active' : 'Memory Mode'}. All systems nominal.`;
         } else if (q.match(/visitor|guest|pass|gate pass/)) {
-            answer = `The Smart Visitor Entry system is active. Visitors submit their details at the gate, the host receives a WhatsApp approval request, and upon approval receives a NX-XXXX gate pass code for one-time entry verification.`;
+            answer = `The Smart Visitor Entry system is active. Visitors submit details at the gate, hosts approve via WhatsApp, and an NX-XXXX gate pass code is issued for single-use verification.`;
         } else if (q.match(/hello|hi|hey|good morning|good evening|salaam|salam/)) {
-            answer = `Hello! I am NexusScan AI Security Assistant. I can report on attendance (${presentCount} present), threats (${threatCount} today), system status, and visitor management. How can I assist you?`;
+            const roleGreeting = userRole === 'guard' ? 'Officer' : userRole === 'faculty' ? 'Professor' : 'Administrator';
+            answer = `Hello ${roleGreeting}! I am NexusScan AI Assistant. How can I assist you with your role-authorized security tasks today?`;
         } else if (q.match(/who|which person|name/)) {
             answer = recentNames
                 ? `Recent entries today: ${recentNames}.`
                 : `No entries recorded yet today. The face recognition system is scanning at the main gate.`;
         } else {
-            answer = `I heard: "${question}". I can assist with: attendance counts, late arrivals, security threats, system status, visitor management, and gate pass verification. Current status: ${presentCount} present, ${threatCount} threats today.`;
+            const allowedScope = userRole === 'guard'
+                ? 'gate attendance, security threats, system status, and visitor passes'
+                : userRole === 'faculty'
+                ? 'student attendance, late arrivals, and attendance log summaries'
+                : 'attendance, threats, system vitality, lockdown controls, and visitor management';
+            answer = `I heard: "${question}". For your ${userRole.toUpperCase()} role, I can assist with: ${allowedScope}.`;
         }
 
         return res.json({ success: true, answer, source: 'local-ai' });

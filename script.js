@@ -11,7 +11,9 @@ let lastAnnouncement = "";
 let registeredDescriptors = [];
 let currentUserRole = null; // 'admin' | 'faculty' | 'guard'
 
-const API_BASE_URL = 'http://127.0.0.1:3000';
+const API_BASE_URL = (typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('http'))
+    ? window.location.origin
+    : 'http://127.0.0.1:3000';
 function apiRequest(url, options = {}) {
     const headers = new Headers(options.headers || {});
     const token = sessionStorage.getItem('nx_token');
@@ -87,13 +89,89 @@ function showDashboard(role) {
     currentUserRole = role;
 
     const loginOverlay = document.getElementById('loginOverlay');
-    const dashboard = document.getElementById('mainDashboard');
     if (loginOverlay) loginOverlay.classList.add('hidden');
-    if (dashboard) dashboard.classList.remove('hidden');
 
     applyRoleView(role);
+    updateAiAssistantAccess(role);
 
     startApp();
+}
+
+function handleGuardHeaderAction() {
+    if (currentUserRole === 'guard') {
+        logoutUser();
+    } else {
+        closeMobileGuardView();
+    }
+}
+
+function updateAiAssistantAccess(role) {
+    const titleEl = document.getElementById('aiChatTitle');
+    const badgeEl = document.getElementById('aiSourceBadge');
+    const welcomeTextEl = document.getElementById('aiWelcomeText');
+    const chipsContainer = document.getElementById('aiSuggestedChips');
+
+    const roleConfig = {
+        guard: {
+            title: '💂 GUARD AI ASSISTANT',
+            badge: 'Gate Operations AI • Active',
+            welcome: 'Hello Guard! I am NexusScan AI Assistant for Gate Operations. You can query gate attendance, today\'s security threats, gate pass verification, and gate vitality.',
+            chips: [
+                'How many present?',
+                'Any threats today?',
+                'System status?',
+                'Verify visitor pass',
+                'What are my features?'
+            ]
+        },
+        faculty: {
+            title: '🎓 FACULTY AI ASSISTANT',
+            badge: 'Academic Logs AI • Active',
+            welcome: 'Hello Faculty Member! I am NexusScan AI Assistant. You can query student attendance counts, late arrivals, and attendance log summaries.',
+            chips: [
+                'How many present today?',
+                'Late arrivals count?',
+                'Attendance summary',
+                'System status?',
+                'What are my features?'
+            ]
+        },
+        admin: {
+            title: '🛡️ NEXUSSCAN MASTER AI',
+            badge: 'Full Security Engine • Active',
+            welcome: 'Hello Administrator! I am NexusScan AI Security Assistant. You have full access to query attendance, threats, system vitality, lockdown status, and audit logs.',
+            chips: [
+                'System vitality status',
+                'Any threats today?',
+                'How many present?',
+                'Lockdown status?',
+                'What are all features?'
+            ]
+        }
+    };
+
+    const cfg = roleConfig[role] || roleConfig.admin;
+    if (titleEl) titleEl.textContent = cfg.title;
+    if (badgeEl) badgeEl.textContent = cfg.badge;
+    if (welcomeTextEl) welcomeTextEl.textContent = cfg.welcome;
+
+    if (chipsContainer) {
+        chipsContainer.innerHTML = '';
+        cfg.chips.forEach(chipText => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'text-[10px] bg-indigo-900/60 hover:bg-indigo-800 text-indigo-200 border border-indigo-700/60 rounded-full px-2.5 py-1 transition text-left cursor-pointer';
+            btn.textContent = chipText;
+            btn.onclick = () => {
+                const input = document.getElementById('aiChatInput');
+                if (input) {
+                    input.value = chipText;
+                    sendAiMessage();
+                }
+            };
+            chipsContainer.appendChild(btn);
+        });
+    }
 }
 
 function applyRoleView(role) {
@@ -110,27 +188,47 @@ function applyRoleView(role) {
         badge.className = `text-[10px] font-bold tracking-widest px-2.5 py-1 rounded-full border ${cfg.border} ${cfg.bg} ${cfg.color}`;
     }
 
-    if (role === 'faculty') {
-        document.querySelectorAll('[data-role-hide="faculty"]').forEach(el => {
+    // 100% RBAC on all elements with data-role
+    document.querySelectorAll('[data-role]').forEach(el => {
+        const allowedRoles = el.getAttribute('data-role').split(',').map(r => r.trim());
+        if (allowedRoles.includes(role)) {
+            el.classList.remove('hidden');
+            el.style.display = '';
+        } else {
+            el.classList.add('hidden');
             el.style.display = 'none';
-        });
-    }
+        }
+    });
 
-    if (role !== 'admin') {
-        document.querySelectorAll('[data-role-admin-only="true"]').forEach(el => {
-            el.style.display = 'none';
-        });
-    }
+    const dashboard = document.getElementById('mainDashboard');
+    const guardOverlay = document.getElementById('mobileGuardOverlay');
+    const guardBtn = document.getElementById('guardHeaderActionBtn');
 
     if (role === 'guard') {
-        setTimeout(() => {
-            openMobileGuardView();
-        }, 800);
-    }
+        // Guard ONLY has Guard Console
+        if (dashboard) dashboard.classList.add('hidden');
+        if (guardOverlay) guardOverlay.classList.remove('hidden');
 
-    if (role === 'admin') {
-        const facultySection = document.getElementById('facultySection');
-        if (facultySection) facultySection.classList.remove('hidden');
+        if (guardBtn) {
+            guardBtn.setAttribute('title', 'Logout');
+            guardBtn.setAttribute('aria-label', 'Logout');
+            guardBtn.className = 'guard-close-button bg-rose-950/60 border border-rose-500/50 hover:bg-rose-900/80 text-rose-400';
+            guardBtn.innerHTML = '<i data-lucide="log-out" class="w-4 h-4"></i>';
+        }
+
+        const mgVideo = document.getElementById('mgVideo');
+        attachCameraStream(mgVideo);
+    } else {
+        // Faculty & Admin use Desktop Dashboard
+        if (dashboard) dashboard.classList.remove('hidden');
+        if (guardOverlay) guardOverlay.classList.add('hidden');
+
+        if (guardBtn) {
+            guardBtn.setAttribute('title', 'Return to Admin Console');
+            guardBtn.setAttribute('aria-label', 'Close Guard View');
+            guardBtn.className = 'guard-close-button bg-slate-800 border border-slate-600 hover:bg-slate-700 text-slate-200';
+            guardBtn.innerHTML = '<i data-lucide="x" class="w-4 h-4"></i>';
+        }
     }
 
     if (typeof lucide !== 'undefined') lucide.createIcons();
@@ -146,10 +244,11 @@ async function logoutUser() {
 
     const loginOverlay = document.getElementById('loginOverlay');
     const dashboard = document.getElementById('mainDashboard');
+    const guardOverlay = document.getElementById('mobileGuardOverlay');
     if (loginOverlay) loginOverlay.classList.remove('hidden');
     if (dashboard) dashboard.classList.add('hidden');
+    if (guardOverlay) guardOverlay.classList.add('hidden');
 
-    closeMobileGuardView();
     closeAiPanel();
 
     const usernameEl = document.getElementById('loginUsername');
@@ -727,6 +826,10 @@ async function triggerEmergencyAlert() {
 }
 
 function openPassModal() {
+    if (!['admin', 'guard'].includes(currentUserRole)) {
+        showToast('Gate pass verification is restricted to Guards and Administrators.', 'error');
+        return;
+    }
     const modal = document.getElementById('passModal');
     const result = document.getElementById('passResult');
     const input = document.getElementById('passCodeInput');
@@ -742,6 +845,10 @@ function closePassModal() {
 
 async function verifyGatePass(event) {
     if (event) event.preventDefault();
+    if (!['admin', 'guard'].includes(currentUserRole)) {
+        showToast('Access Denied: Only Guards and Administrators can verify gate passes.', 'error');
+        return;
+    }
     const code = (document.getElementById('passCodeInput')?.value || '').trim().toUpperCase();
     const result = document.getElementById('passResult');
     if (!code) return;
@@ -778,6 +885,10 @@ async function verifyGatePass(event) {
 }
 
 function openVisitorModal() {
+    if (!['admin', 'guard'].includes(currentUserRole)) {
+        showToast('Visitor management is restricted to Gate Operators.', 'error');
+        return;
+    }
     const modal = document.getElementById('visitorModal');
     if (modal) modal.classList.remove('hidden');
 }
@@ -825,6 +936,10 @@ async function sendVisitorRequest(event) {
 }
 
 async function markLeaveEntry() {
+    if (currentUserRole !== 'admin') {
+        showToast('Only administrators can record leave entries.', 'error');
+        return;
+    }
     const name = await showAppDialog({ title: 'MARK LEAVE', message: 'Enter the student name to record a leave entry.', inputLabel: 'STUDENT NAME', placeholder: 'e.g. Maryam', confirmLabel: 'MARK LEAVE', cancelLabel: 'CANCEL' });
     if (name && name.trim() !== "") {
         const studentName = name.trim();
@@ -925,6 +1040,10 @@ function addTableRow(name, time, status) {
 }
 
 async function manualEntry() {
+    if (currentUserRole !== 'admin') {
+        showToast('Only administrators can manually mark attendance.', 'error');
+        return;
+    }
     const name = await showAppDialog({ title: 'MANUAL ATTENDANCE', message: 'Enter the student name for a manual attendance record.', inputLabel: 'STUDENT NAME', placeholder: 'e.g. Safdar', confirmLabel: 'MARK PRESENT', cancelLabel: 'CANCEL' });
     if (name && name.trim() !== "") {
         markAttendance(name.trim());
@@ -1127,7 +1246,14 @@ function updateStatsChart() {
     statsChartInstance.update();
 }
 
-function openAiPanel() {
+function openAiPanel(event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    updateAiAssistantAccess(currentUserRole || 'guard');
+
     const panel = document.getElementById('aiChatPanel');
     if (panel) {
         panel.classList.remove('hidden');
@@ -1273,6 +1399,10 @@ function startAiVoiceInput() {
 function startVoiceAssistant() { openAiPanel(); }
 
 function openMobileGuardView() {
+    if (currentUserRole !== 'admin' && currentUserRole !== 'guard') {
+        showToast('Guard view is restricted to Security Guards and Administrators.', 'error');
+        return;
+    }
     const overlay = document.getElementById('mobileGuardOverlay');
     if (overlay) {
         overlay.classList.remove('hidden');
@@ -1283,6 +1413,10 @@ function openMobileGuardView() {
 }
 
 function closeMobileGuardView() {
+    if (currentUserRole === 'guard') {
+        // Guards are strictly bound to the Guard Console; they cannot close to the admin dashboard
+        return;
+    }
     const overlay = document.getElementById('mobileGuardOverlay');
     if (overlay) overlay.classList.add('hidden');
 }
