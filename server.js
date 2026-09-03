@@ -53,6 +53,28 @@ const USERS = {
     guard: { role: 'guard', passwordHash: bcrypt.hashSync(GUARD_PASSWORD, 10) }
 };
 
+function authenticateToken(req, res, next) {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.substring(7) : '';
+    if (!token) return res.status(401).json({ success: false, error: 'Authentication required.' });
+
+    try {
+        req.user = jwt.verify(token, JWT_SECRET);
+        next();
+    } catch (error) {
+        return res.status(401).json({ success: false, error: 'Invalid or expired session.' });
+    }
+}
+
+function authorizeRoles(...roles) {
+    return (req, res, next) => {
+        if (!req.user || !roles.includes(req.user.role)) {
+            return res.status(403).json({ success: false, error: 'Access denied for this role.' });
+        }
+        next();
+    };
+}
+
 let isSystemLocked = false;
 let currentAnnouncement = "";
 
@@ -222,7 +244,7 @@ app.post('/api/auth', async (req, res) => {
     }
 
     const token = jwt.sign(
-        { username: username.toLowerCase(), role: user.role },
+        { username: normalizedUsername, role: user.role },
         JWT_SECRET,
         { expiresIn: '12h' }
     );
@@ -231,7 +253,15 @@ app.post('/api/auth', async (req, res) => {
     return res.json({ success: true, token, role: user.role, username: normalizedUsername });
 });
 
-app.post('/api/visitor-request', async (req, res) => {
+app.get('/api/auth/me', authenticateToken, (req, res) => {
+    const user = USERS[req.user.username];
+    if (!user || user.role !== req.user.role) {
+        return res.status(401).json({ success: false, error: 'Invalid session user.' });
+    }
+    return res.json({ success: true, username: req.user.username, role: user.role });
+});
+
+app.post('/api/visitor-request', authenticateToken, authorizeRoles('admin', 'faculty', 'guard'), async (req, res) => {
     try {
         const { visitorName, cnic, hostPhone, purpose } = req.body || {};
 
@@ -267,7 +297,7 @@ app.post('/api/visitor-request', async (req, res) => {
     }
 });
 
-app.post('/api/verify-pass', async (req, res) => {
+app.post('/api/verify-pass', authenticateToken, authorizeRoles('admin', 'faculty', 'guard'), async (req, res) => {
     try {
         const passCode = String((req.body || {}).passCode || '').trim().toUpperCase();
         if (!passCode) return res.status(400).json({ success: false, error: 'Pass code required!' });
@@ -300,7 +330,7 @@ app.post('/api/verify-pass', async (req, res) => {
     }
 });
 
-app.post('/api/attendance', async (req, res) => {
+app.post('/api/attendance', authenticateToken, authorizeRoles('admin', 'faculty', 'guard'), async (req, res) => {
     try {
         const { name, status, phone, time } = req.body || {};
         if (!name || !status) return res.status(400).json({ success: false, error: 'Name & status required!' });
@@ -333,7 +363,7 @@ app.post('/api/attendance', async (req, res) => {
     }
 });
 
-app.post('/api/threat-alert', async (req, res) => {
+app.post('/api/threat-alert', authenticateToken, authorizeRoles('admin', 'guard'), async (req, res) => {
     try {
         const { reason, snapshot } = req.body || {};
         await saveThreat({ reason: reason || 'Unknown threat', hasSnapshot: Boolean(snapshot) });
@@ -359,7 +389,7 @@ app.post('/api/threat-alert', async (req, res) => {
     }
 });
 
-app.get('/api/logs', async (req, res) => {
+app.get('/api/logs', authenticateToken, authorizeRoles('admin', 'faculty', 'guard'), async (req, res) => {
     const attendance = await getAllAttendance();
     const today = new Date().toDateString();
     const todays = attendance.filter(r => r.date === today);
@@ -374,7 +404,7 @@ app.get('/api/logs', async (req, res) => {
     });
 });
 
-app.get('/api/labels', (req, res) => {
+app.get('/api/labels', authenticateToken, authorizeRoles('admin', 'faculty', 'guard'), (req, res) => {
     try {
         const dir = path.join(__dirname, 'labels');
         const labels = fs.readdirSync(dir)
@@ -385,14 +415,14 @@ app.get('/api/labels', (req, res) => {
     }
 });
 
-app.get('/api/system-status', (req, res) => {
+app.get('/api/system-status', authenticateToken, authorizeRoles('admin', 'faculty', 'guard'), (req, res) => {
     res.json({
         locked: isSystemLocked,
         announcement: currentAnnouncement
     });
 });
 
-app.get('/api/export/excel', async (req, res) => {
+app.get('/api/export/excel', authenticateToken, authorizeRoles('admin', 'faculty'), async (req, res) => {
     try {
         const rows = (await getAllAttendance()).map(r => ({
             Name: r.name, Time: r.time, Status: r.status, Date: r.date
@@ -410,7 +440,7 @@ app.get('/api/export/excel', async (req, res) => {
     }
 });
 
-app.post('/api/ask-ai', async (req, res) => {
+app.post('/api/ask-ai', authenticateToken, authorizeRoles('admin', 'faculty', 'guard'), async (req, res) => {
     try {
         const { question, context } = req.body || {};
         if (!question) return res.status(400).json({ success: false, error: 'Question required!' });

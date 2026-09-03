@@ -12,6 +12,12 @@ let registeredDescriptors = [];
 let currentUserRole = null; // 'admin' | 'faculty' | 'guard'
 
 const API_BASE_URL = 'http://127.0.0.1:3000';
+function apiRequest(url, options = {}) {
+    const headers = new Headers(options.headers || {});
+    const token = sessionStorage.getItem('nx_token');
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    return fetch(url, { ...options, headers });
+}
 
 async function loginUser(event) {
     if (event) event.preventDefault();
@@ -110,6 +116,12 @@ function applyRoleView(role) {
         });
     }
 
+    if (role !== 'admin') {
+        document.querySelectorAll('[data-role-admin-only="true"]').forEach(el => {
+            el.style.display = 'none';
+        });
+    }
+
     if (role === 'guard') {
         setTimeout(() => {
             openMobileGuardView();
@@ -148,14 +160,23 @@ async function logoutUser() {
     if (errorEl) errorEl.classList.add('hidden');
 }
 
-function checkExistingSession() {
+async function checkExistingSession() {
     const token = sessionStorage.getItem('nx_token');
-    const role = sessionStorage.getItem('nx_role');
-    if (token && role) {
-        showDashboard(role);
+    if (!token) return false;
+    try {
+        const response = await apiRequest(`${API_BASE_URL}/api/auth/me`);
+        if (!response.ok) throw new Error('Session expired');
+        const data = await response.json();
+        sessionStorage.setItem('nx_role', data.role);
+        sessionStorage.setItem('nx_user', data.username);
+        showDashboard(data.role);
         return true;
+    } catch (error) {
+        sessionStorage.removeItem('nx_token');
+        sessionStorage.removeItem('nx_role');
+        sessionStorage.removeItem('nx_user');
+        return false;
     }
-    return false;
 }
 
 
@@ -340,7 +361,7 @@ async function startSecondaryCamera() {
 async function loadLabeledImages() {
     let labels = [];
     try {
-        const res = await fetch(`${API_BASE_URL}/api/labels`);
+        const res = await apiRequest(`${API_BASE_URL}/api/labels`);
         const data = await res.json();
         labels = data.labels || [];
     } catch (e) {
@@ -385,6 +406,10 @@ async function rebuildFaceMatcher() {
 }
 
 async function enrollNewFace() {
+        if (currentUserRole !== 'admin') {
+            showToast('Only administrators can enroll faces.', 'error');
+            return;
+        }
     const name = await showAppDialog({ title: 'ENROLL NEW FACE', message: 'Enter the person\'s name to create a biometric profile.', inputLabel: 'PERSON NAME', placeholder: 'e.g. Aoun', confirmLabel: 'CONTINUE', cancelLabel: 'CANCEL' });
     if (!name || !name.trim()) return;
     const label = name.trim();
@@ -683,7 +708,7 @@ function triggerThreatUI(message, snapshot = null) {
         }, 30000);
     }
 
-    fetch(`${API_BASE_URL}/api/threat-alert`, {
+    apiRequest(`${API_BASE_URL}/api/threat-alert`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: message, snapshot })
@@ -691,6 +716,10 @@ function triggerThreatUI(message, snapshot = null) {
 }
 
 async function triggerEmergencyAlert() {
+    if (!['admin', 'guard'].includes(currentUserRole)) {
+        showToast('This action is not available for your role.', 'error');
+        return;
+    }
     if (await showAppDialog({ title: 'EMERGENCY RED ALERT', message: 'Trigger the campus emergency WhatsApp broadcast now?', confirmLabel: 'TRIGGER ALERT', cancelLabel: 'CANCEL', danger: true })) {
         triggerThreatUI("PANIC BUTTON TRIGGERED BY SECURITY ADMIN", captureThreatSnapshot());
         showToast("Emergency WhatsApp Broadcast Fired!", "error");
@@ -718,7 +747,7 @@ async function verifyGatePass(event) {
     if (!code) return;
 
     try {
-        const response = await fetch(`${API_BASE_URL}/api/verify-pass`, {
+        const response = await apiRequest(`${API_BASE_URL}/api/verify-pass`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ passCode: code })
@@ -772,7 +801,7 @@ async function sendVisitorRequest(event) {
     }
 
     try {
-        const response = await fetch(`${API_BASE_URL}/api/visitor-request`, {
+        const response = await apiRequest(`${API_BASE_URL}/api/visitor-request`, {
             method: 'POST',
             headers: {
                 'Accept': 'application/json',
@@ -822,7 +851,7 @@ function updateStatsUI() {
 async function restoreLogsFromServer() {
     const logContainer = document.getElementById('attendanceBody');
     try {
-        const res = await fetch(`${API_BASE_URL}/api/logs`);
+        const res = await apiRequest(`${API_BASE_URL}/api/logs`);
         const data = await res.json();
 
         if (logContainer) logContainer.innerHTML = "";
@@ -903,6 +932,10 @@ async function manualEntry() {
 }
 
 async function clearDatabase() {
+    if (currentUserRole !== 'admin') {
+        showToast('Only administrators can clear logs.', 'error');
+        return;
+    }
     if (await showAppDialog({ title: 'CLEAR SESSION LOGS', message: 'Are you sure you want to clear local session logs? This cannot be undone.', confirmLabel: 'CLEAR LOGS', cancelLabel: 'CANCEL', danger: true })) {
         localStorage.removeItem('attendance_records');
         markedAttendance.clear();
@@ -912,7 +945,7 @@ async function clearDatabase() {
 }
 
 function sendWhatsAppNotification(studentName, statusType) {
-    fetch(`${API_BASE_URL}/api/attendance`, {
+    apiRequest(`${API_BASE_URL}/api/attendance`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -929,6 +962,26 @@ function sendWhatsAppNotification(studentName, statusType) {
         .catch(err => {
             console.error("Backend Connection Offline:", err);
         });
+}
+
+async function exportLogs() {
+    if (!['admin', 'faculty'].includes(currentUserRole)) {
+        showToast('Log export is not available for your role.', 'error');
+        return;
+    }
+
+    try {
+        const response = await apiRequest(`${API_BASE_URL}/api/export/excel`);
+        if (!response.ok) throw new Error('Export request failed');
+        const blob = await response.blob();
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `NexusScan_Report_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+    } catch (error) {
+        showToast('Unable to export logs. Please try again.', 'error');
+    }
 }
 
 function downloadCSV() {
@@ -967,7 +1020,7 @@ if (document.getElementById('logSearch')) {
 
 setInterval(async () => {
     try {
-        const response = await fetch(`${API_BASE_URL}/api/system-status`);
+        const response = await apiRequest(`${API_BASE_URL}/api/system-status`);
         const data = await response.json();
 
         const videoOverlay = document.getElementById('video');
@@ -1156,7 +1209,7 @@ async function sendAiMessage() {
     const typingEl = appendTypingIndicator();
 
     try {
-        const response = await fetch(`${API_BASE_URL}/api/ask-ai`, {
+        const response = await apiRequest(`${API_BASE_URL}/api/ask-ai`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ question })
@@ -1236,6 +1289,8 @@ function closeMobileGuardView() {
 
 if (typeof lucide !== 'undefined') lucide.createIcons();
 
-if (!checkExistingSession()) {
-    setTimeout(() => document.getElementById('loginUsername')?.focus(), 300);
-}
+(async () => {
+    if (!await checkExistingSession()) {
+        setTimeout(() => document.getElementById('loginUsername')?.focus(), 300);
+    }
+})();
