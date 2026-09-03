@@ -1,144 +1,221 @@
-# 🛡️ NexusScan AI Pro — Intelligent Biometric Campus Security & Access Control System
+# NexusScan AI
 
-> **A cutting-edge, real-time physical campus security management engine powered by Computer Vision, Eye Aspect Ratio (EAR) Liveness Detection, WhatsApp Web Command Automation, Role-Based Access Control (RBAC), and Google Gemini AI.**
+NexusScan AI is a web-based campus security and access-control system. It combines browser-based face recognition, blink-based liveness detection, role-based access control, attendance logging, visitor pass approval, WhatsApp notifications, and an AI security assistant in one dashboard.
 
----
+## Features
 
-## 🏛️ System Architecture
+- Face detection and recognition using the models in `models/`.
+- Liveness checking using facial landmarks and eye-blink detection.
+- JWT authentication with three roles: Admin, Faculty, and Guard.
+- Camera-based attendance with manual attendance fallback.
+- Visitor requests approved or rejected through WhatsApp replies.
+- Single-use visitor passes in the `NX-XXXX` format.
+- Threat alerts with optional camera snapshots sent through WhatsApp.
+- Live attendance, threat counters, system status, and Excel export.
+- AI assistant using Google Gemini when configured, with a local fallback when it is not.
+- Remote WhatsApp commands for status, lockdown, unlock, and announcements.
+- MongoDB persistence with automatic in-memory fallback when MongoDB is unavailable.
 
-```
-                                  +---------------------------------------+
-                                  |     NexusScan AI Pro Client (Web)     |
-                                  |  (Face-API.js + Tailwind + HUD Canvas)|
-                                  +-------------------+-------------------+
-                                                      |
-                                          HTTP / REST (JWT Auth)
-                                                      |
-                                                      v
-+---------------------------------------------------------------------------------------------------------+
-|                                    Node.js Express Security Server                                      |
-|                                                                                                         |
-|  +------------------------+  +------------------------+  +--------------------+  +-------------------+  |
-|  |  JWT & RBAC Auth Engine|  | Biometric Vector Engine|  | Rate Limiter (IP)  |  | WhatsApp Engine   |  |
-|  |  (Bcrypt Hash / Roles) |  | (Euclidean Dist <=0.48)|  | (Anti-Brute Force) |  | (Puppeteer Client)|  |
-|  +------------------------+  +------------------------+  +--------------------+  +---------+---------+  |
-+--------------------------------------------------------------------------------------------|------------+
-               |                                                                             |
-               v                                                                             v
-+-----------------------------+                                               +---------------------------+
-|    NeDB Embedded Database   |                                               | WhatsApp Real-time Network|
-|  - data/users.db            |                                               |  - Security Threat Alerts |
-|  - data/biometrics.db       |                                               |  - Attendance Notices     |
-|  - data/attendance.db       |                                               |  - Host Visitor Approvals |
-|  - data/passes.db           |                                               |  - Remote Lockdown (LOCK) |
-|  - data/threats.db          |                                               +---------------------------+
-+-----------------------------+
-```
+## Technology
 
----
+- Frontend: HTML, CSS, JavaScript, Tailwind CSS CDN, Face API, and Chart.js.
+- Backend: Node.js and Express.
+- Database: MongoDB through Mongoose, with hybrid memory mode as a fallback.
+- Messaging: `whatsapp-web.js` and Puppeteer.
+- Authentication: JWT and bcrypt.
 
-## ▶️ Run Locally
+## Requirements
 
-From the project folder, install dependencies and start the backend:
+Install the following before running the project:
 
-```bash
+- Node.js 18 or newer and npm.
+- A modern browser with camera permission support.
+- MongoDB, if attendance, visitor, and threat data must survive server restarts.
+- Google Chrome or Chromium for WhatsApp Web automation.
+- A WhatsApp phone for the account that will be paired with WhatsApp Web.
+
+MongoDB, Gemini, and WhatsApp are optional for a basic demo. The dashboard and local AI fallback can still run without MongoDB or a Gemini API key. WhatsApp notifications are skipped until WhatsApp Web is authenticated.
+
+## Installation
+
+Open PowerShell or a terminal in the project directory:
+
+```powershell
+cd "D:\xampp\htdocs\NexusScan Ai"
 npm install
+```
+
+Create the local environment file:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Edit `.env` and replace the demo values with your own values before using the project outside a local demonstration. The `.env` file contains passwords, phone numbers, and API keys and must not be committed.
+
+## Configuration
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `PORT` | No | `3000` | Express server port. |
+| `MONGO_URI` | No | `mongodb://127.0.0.1:27017/nexusScanAI` | MongoDB connection string. |
+| `JWT_SECRET` | Recommended | `nexusscan-secret-2026` | Secret used to sign login tokens. Change it in production. |
+| `ADMIN_PASSWORD` | Recommended | `admin123` | Admin login password. |
+| `FACULTY_PASSWORD` | Recommended | `faculty123` | Faculty login password. |
+| `GUARD_PASSWORD` | Recommended | `guard123` | Guard login password. |
+| `SECURITY_PHONE` | For WhatsApp | Demo value | Number that receives attendance and threat alerts. |
+| `ADMIN_WHITELIST` | For WhatsApp security | Empty | Comma-separated numbers allowed to issue admin WhatsApp commands. |
+| `CHROME_PATH` | No | Automatic | Custom Chrome/Chromium executable path for Puppeteer. |
+| `GEMINI_API_KEY` | No | Empty | Enables Google Gemini AI instead of the local fallback. |
+
+Use international phone formatting where possible. For example:
+
+```env
+PORT=3000
+MONGO_URI=mongodb://127.0.0.1:27017/nexusScanAI
+JWT_SECRET=replace-with-a-long-random-secret
+SECURITY_PHONE=923001234567
+ADMIN_WHITELIST=923001234567
+GEMINI_API_KEY=your_gemini_api_key
+```
+
+## Start the application
+
+Start the backend and serve the frontend:
+
+```powershell
+npm start
+```
+
+The application is available at:
+
+```text
+http://127.0.0.1:3000
+```
+
+The equivalent direct command is:
+
+```powershell
 node server.js
 ```
 
-Keep that terminal running, then open `http://127.0.0.1:3000` in a browser. The default demo accounts are:
+Keep the server terminal open while using the dashboard. To stop it, press `Ctrl+C`.
 
-| Username | Password |
-|---|---|
-| `admin` | `admin123` |
-| `faculty` | `faculty123` |
-| `guard` | `guard123` |
+## First run checklist
 
-The frontend also supports Live Server or another local static server; it automatically sends API requests to backend port `3000`.
+1. Run `npm install`.
+2. Copy `.env.example` to `.env` and configure passwords and phone numbers.
+3. Start MongoDB if persistent storage is needed.
+4. Run `npm start`.
+5. Open `http://127.0.0.1:3000` in Chrome or another modern browser.
+6. Allow camera access when prompted.
+7. On the first server start, scan the printed WhatsApp QR code with the WhatsApp account used for notifications.
+8. Log in with one of the accounts below.
 
-## 🚀 Key Innovations & Features
+## Demo accounts
 
-1. **Anti-Deepfake Liveness Defense:** Uses facial landmark geometry and dynamic Eye Aspect Ratio (EAR) blink detection to block photo/video spoofing attacks.
-2. **Euclidean Vector Biometric Matching:** Matches 128-dimensional facial descriptors with a strict confidence threshold of **0.48**.
-3. **15-Second Threat Alert Defense:** Suppresses alert spamming by strictly enforcing a 15-second timestamp cooldown between security broadcasts.
-4. **Interactive WhatsApp Automation:**
-   * Hosts receive visitor approval notifications with `1` (Approve) and `2` (Reject) interactive reply commands.
-   * Approved gate pass codes (`NX-XXXX`) automatically forward to the Gate Guard WhatsApp.
-   * Admin whitelist commands: `LOCK`, `UNLOCK`, `STATUS`, `ANNOUNCE <text>`.
-5. **Zero-Crash Architecture:** Non-overlapping sequential frame inference loop prevents WebGL memory leaks and browser tab crashes.
-6. **Zero-Setup Database:** Runs out-of-the-box using embedded persistent `@seald-io/nedb` without requiring local MongoDB installations.
-7. **Bcrypt + JWT Multi-Role RBAC:** Protects Admin, Guard, and Faculty views with cryptographic tokens and sliding-window rate limiting.
+These values come from the default environment configuration and should be changed before deployment:
 
----
+| Username | Default password | Access |
+| --- | --- | --- |
+| `admin` | `admin123` | Full dashboard, enrollment, logs, threat controls, and exports. |
+| `faculty` | `faculty123` | Attendance logs, analytics, AI assistant, and Excel export. |
+| `guard` | `guard123` | Guard console, visitor pass verification, and emergency alerts. |
 
-## 📡 API Reference Table
+## WhatsApp setup and commands
 
-| Method | Endpoint | Auth | Description | Payload Example |
-|---|---|---|---|---|
-| `POST` | `/api/auth` | Public | Authenticate user & issue JWT | `{"username": "admin", "password": "..."}` |
-| `GET` | `/api/auth/me` | Bearer JWT | Verify current session identity | _None_ |
-| `POST` | `/api/biometrics/enroll` | Admin JWT | Enroll face with privacy consent | `{"name": "Zaeem", "role": "Student", "descriptors": [...], "consent": true}` |
-| `GET` | `/api/biometrics/list` | Public | List all enrolled profiles | _None_ |
-| `POST` | `/api/biometrics/verify` | Public | Server biometric matching | `{"descriptor": [128 floats], "isLive": true}` |
-| `POST` | `/api/attendance` | Public | Manual / Face attendance sync | `{"name": "Safdar", "status": "Present", "time": "09:15 AM"}` |
-| `POST` | `/api/threat-alert` | Public | Trigger threat & WhatsApp dispatch | `{"reason": "Unauthorized subject at Main Gate"}` |
-| `POST` | `/api/visitor-request` | Public | Submit visitor approval request | `{"visitorName": "Ali", "cnic": "35201-1234567-1", "hostPhone": "03001234567", "purpose": "Meeting"}` |
-| `POST` | `/api/verify-pass` | Public | Verify digital visitor pass code | `{"passCode": "NX-4821"}` |
-| `GET` | `/api/logs` | Public | Fetch live attendance & statistics | _None_ |
-| `GET` | `/api/export/excel` | Public | Download Excel attendance sheet | _None_ |
-| `POST` | `/api/ai-chat` | Public | Google Gemini / Local AI chat | `{"message": "How many students are present?"}` |
-| `GET` | `/api/system-status` | Public | Poll lockdown & announcement state | _None_ |
-| `GET` | `/api/privacy-policy` | Public | Fetch biometric compliance policy | _None_ |
+When the server starts, `whatsapp-web.js` prints a QR code in the terminal if the session is not authenticated. Scan it from WhatsApp on the phone that owns the notification account. The authenticated session is stored locally in `.wwebjs_auth/` and should not be committed.
 
----
+Set `ADMIN_WHITELIST` before using remote commands. If it is empty, the server is in demo mode and admin command protection is disabled.
 
-## ⚙️ Environment Variables Reference
+Send these commands from an authorized WhatsApp number:
 
-| Variable | Type | Default | Description |
-|---|---|---|---|
-| `PORT` | Number | `3000` | Port for the Express backend server |
-| `JWT_SECRET` | String | _Auto-generated_ | Secret key used to sign and verify authentication JWTs |
-| `SECURITY_PHONE` | String | `03236404459` | Admin / Security WhatsApp number for threat & attendance logs |
-| `GUARD_PHONE` | String | `03008692192` | Gate Security WhatsApp number for visitor pass alerts |
-| `FACULTY_PHONE` | String | `03008692192` | Academic Faculty notification number |
-| `ADMIN_PASSWORD` | String | `admin123` | Master password for the Admin account (hashed on boot) |
-| `GUARD_PASSWORD` | String | `guard123` | Password for the Guard console |
-| `FACULTY_PASSWORD` | String | `faculty123` | Password for the Faculty dashboard |
-| `ADMIN_WHITELIST` | String | `03236404459` | Comma-separated WhatsApp numbers allowed to send remote commands |
-| `GEMINI_API_KEY` | String | _Optional_ | Google Gemini API key for advanced natural language assistance |
+| Command | Result |
+| --- | --- |
+| `STATUS` | Returns lock state, threat count, port, and database mode. |
+| `LOCK` | Activates emergency lockdown and disables normal scanning. |
+| `UNLOCK` | Releases lockdown and resumes normal operation. |
+| `ANNOUNCE message` | Publishes a temporary system announcement. |
+| `1` | Approves the latest pending visitor request for that host. |
+| `2` | Rejects the latest pending visitor request for that host. |
 
----
+## Main workflow
 
-## 👁️ Liveness & Anti-Spoofing Algorithm
+1. A user signs in and receives a JWT session token.
+2. The browser loads the face-recognition models and requests camera access.
+3. A recognized live face can create an attendance record.
+4. An unknown or non-live face is treated as a security event and can trigger a WhatsApp alert.
+5. Staff submit visitor details from the dashboard.
+6. The host replies `1` or `2` in WhatsApp to approve or reject the request.
+7. An approved visitor receives an `NX-XXXX` pass valid for one entry on the issue date.
+8. An Admin or Guard verifies the pass from the dashboard.
 
-NexusScan AI Pro incorporates multi-layered anti-spoofing defense:
+## Important project directories
 
-1. **Geometric Landmark Ratio:** Verifies 68 facial landmark coordinates to confirm valid human facial proportions.
-2. **Eye Aspect Ratio (EAR) Blink Verification:**
-   $$\text{EAR} = \frac{|p_2 - p_6| + |p_3 - p_5|}{2 \cdot |p_1 - p_4|}$$
-   Dynamic eye closure and reopening variance confirms live biological presence, preventing static photograph and pre-recorded video screen attacks.
-3. **Euclidean Confidence Distance:**
-   $$d(u, v) = \sqrt{\sum_{i=1}^{128} (u_i - v_i)^2}$$
-   Matches vectors with a threshold of $d \le 0.48$. Distance values $> 0.48$ are immediately classified as **Unauthorized Suspects**.
+| Path | Purpose |
+| --- | --- |
+| `server.js` | Express API, authentication, MongoDB access, WhatsApp integration, and server startup. |
+| `index.html` | Dashboard markup and login interface. |
+| `script.js` | Camera, face recognition, authentication, dashboard, and API client logic. |
+| `style.css` | Application styling and scanner effects. |
+| `models/` | Face API model files loaded by the browser. |
+| `labels/` | Enrolled profile label directories. |
+| `data/` | Local application data directory. |
+| `.env.example` | Safe configuration template. |
 
----
+## API endpoints
 
-## 🔒 Privacy & Biometric Data Handling
+All protected endpoints require `Authorization: Bearer <token>`.
 
-- **No Raw Image Retention:** Faces are converted directly into 128-dimensional floating-point vectors. Raw photos are not stored permanently.
-- **Explicit Consent:** Every biometric registration requires checked user authorization.
-- **Data Retention:** Access logs follow a 30-day compliance retention cycle.
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/auth` | Sign in and receive a JWT. |
+| `GET` | `/api/auth/me` | Validate the current session. |
+| `POST` | `/api/attendance` | Create an attendance record. |
+| `GET` | `/api/logs` | Read attendance, threat counts, and lock state. |
+| `POST` | `/api/visitor-request` | Submit a visitor approval request. |
+| `POST` | `/api/verify-pass` | Verify a visitor pass. |
+| `POST` | `/api/threat-alert` | Record and dispatch a threat alert. |
+| `GET` | `/api/export/excel` | Download attendance as an `.xlsx` file. |
+| `POST` | `/api/ask-ai` | Ask the role-authorized AI assistant a question. |
+| `GET` | `/api/system-status` | Read lockdown and announcement status. |
+| `GET` | `/api/labels` | List enrolled face labels. |
 
----
+## Troubleshooting
 
-## ⚠️ Known Limitations & Future Production Roadmap
+### Backend is offline
 
-### Known Limitations
-- WhatsApp Web integration relies on local Chromium session instance (`whatsapp-web.js`).
-- Webcam performance depends on client ambient lighting conditions.
+Confirm that `npm start` is running and that port `3000` is available. If another application uses that port, set a different `PORT` in `.env` and open the matching URL.
 
-### Future Production Roadmap (Phase 5 & 6)
-- [ ] Migration to official Meta WhatsApp Cloud Business API.
-- [ ] Multi-tenant PostgreSQL database support.
-- [ ] Dockerized microservice container orchestration.
-- [ ] Multi-camera RTSP/ONVIF IP-Camera streaming gateway.
+### Camera is offline
+
+Open the app through `http://127.0.0.1:3000`, allow camera access in the browser, and refresh the page. Close other applications that are using the camera.
+
+### MongoDB connection warning
+
+The app continues in hybrid memory mode, but records stored in memory are lost when the server restarts. Start MongoDB and check `MONGO_URI` for persistent storage.
+
+### WhatsApp does not send messages
+
+Check that the QR code was scanned, the WhatsApp client reports `READY`, the phone numbers are correct, and the server can launch Chrome. Set `CHROME_PATH` if Chrome is installed in a non-standard location.
+
+### Gemini is unavailable
+
+Check `GEMINI_API_KEY`. If it is missing or invalid, the built-in local AI fallback remains available.
+
+## Available npm commands
+
+```powershell
+npm install       # Install project dependencies
+npm start         # Start the Express server
+npm test          # Placeholder command; no automated tests are currently configured
+node server.js    # Start the server without npm
+```
+
+## Security notes
+
+- Change all default passwords and `JWT_SECRET` before deployment.
+- Keep `.env`, `.wwebjs_auth/`, `.wwebjs_cache/`, and database files private.
+- Set `ADMIN_WHITELIST`; an empty whitelist enables demo-mode command access.
+- Use HTTPS and a production database when exposing the system beyond localhost.
+- Biometric descriptors and attendance data are sensitive information. Obtain consent and follow applicable privacy requirements.
