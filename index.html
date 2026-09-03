@@ -12,22 +12,118 @@
 </head>
 <body class="text-slate-200 min-h-screen flex flex-col justify-between bg-[#0b111e]">
 
+    <!-- 🔐 LOGIN OVERLAY -->
+    <div id="loginOverlay" class="fixed inset-0 z-[100] bg-[#080d17] flex items-center justify-center">
+        <!-- Animated Background Grid -->
+        <div class="absolute inset-0 overflow-hidden pointer-events-none">
+            <div class="absolute inset-0" style="background-image: radial-gradient(circle at 25% 25%, rgba(56,189,248,0.05) 0%, transparent 50%), radial-gradient(circle at 75% 75%, rgba(139,92,246,0.05) 0%, transparent 50%);"></div>
+            <div class="absolute top-0 left-0 w-full h-full" style="background-image: linear-gradient(rgba(56,189,248,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(56,189,248,0.03) 1px, transparent 1px); background-size: 60px 60px;"></div>
+        </div>
+
+        <div class="relative w-full max-w-md px-6">
+            <!-- Logo & Branding -->
+            <div class="text-center mb-8">
+                <div class="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-[#38bdf8]/20 to-violet-500/20 border border-[#38bdf8]/30 mb-4" style="box-shadow: 0 0 40px rgba(56,189,248,0.15)">
+                    <svg class="w-10 h-10 text-[#38bdf8]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/>
+                    </svg>
+                </div>
+                <h1 class="text-2xl font-bold tracking-wider text-[#38bdf8] font-orbitron">NEXUSSCAN AI</h1>
+                <p class="text-xs text-slate-500 mt-1.5 tracking-widest">PHYSICAL SECURITY COMMAND CENTER</p>
+            </div>
+
+            <!-- Login Card -->
+            <div class="bg-[#0f172a]/90 backdrop-blur-xl border border-slate-700/60 rounded-2xl p-6 space-y-5" style="box-shadow: 0 25px 50px rgba(0,0,0,0.5), 0 0 0 1px rgba(56,189,248,0.05)">
+                <div class="text-center">
+                    <h2 class="text-sm font-bold text-slate-200 tracking-wider">SYSTEM ACCESS</h2>
+                    <p class="text-[11px] text-slate-500 mt-1">Enter your credentials to authenticate</p>
+                </div>
+
+                <form onsubmit="loginUser(event)" class="space-y-4">
+                    <div>
+                        <label class="text-[11px] text-slate-400 font-semibold tracking-wider block mb-1.5">USERNAME</label>
+                        <div class="relative">
+                            <div class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/></svg>
+                            </div>
+                            <input id="loginUsername" type="text" placeholder="admin / faculty / guard" required autocomplete="username"
+                                class="w-full bg-[#131e35] border border-slate-700/80 rounded-xl pl-10 pr-4 py-3 text-sm text-white focus:outline-none focus:border-[#38bdf8] focus:ring-1 focus:ring-[#38bdf8]/30 transition placeholder-slate-600">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="text-[11px] text-slate-400 font-semibold tracking-wider block mb-1.5">PASSWORD</label>
+                        <div class="relative">
+                            <div class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg>
+                            </div>
+                            <input id="loginPassword" type="password" placeholder="Enter your password" required autocomplete="current-password"
+                                class="w-full bg-[#131e35] border border-slate-700/80 rounded-xl pl-10 pr-4 py-3 text-sm text-white focus:outline-none focus:border-[#38bdf8] focus:ring-1 focus:ring-[#38bdf8]/30 transition placeholder-slate-600">
+                        </div>
+                    </div>
+
+                    <!-- Error Message -->
+                    <div id="loginError" class="hidden bg-rose-950/60 border border-rose-500/40 text-rose-400 text-xs p-2.5 rounded-lg text-center font-semibold"></div>
+
+                    <button type="submit" id="loginBtn"
+                        class="w-full bg-gradient-to-r from-[#38bdf8] to-[#0284c7] hover:from-[#0284c7] hover:to-[#38bdf8] text-slate-950 font-bold py-3 rounded-xl text-sm tracking-wider transition-all duration-300 shadow-lg shadow-[#38bdf8]/20 hover:shadow-[#38bdf8]/40 active:scale-[0.98]">
+                        <span id="loginBtnText">AUTHENTICATE</span>
+                        <span id="loginBtnLoader" class="hidden">VERIFYING...</span>
+                    </button>
+                </form>
+
+                <!-- Role Hints -->
+                <div class="border-t border-slate-800 pt-4">
+                    <div class="text-[10px] text-slate-600 tracking-wider text-center mb-2">AVAILABLE ROLES</div>
+                    <div class="grid grid-cols-3 gap-2 text-center">
+                        <div class="bg-[#131e35]/60 border border-slate-800/60 rounded-lg py-2 px-1">
+                            <div class="text-[10px] font-bold text-[#38bdf8]">ADMIN</div>
+                            <div class="text-[9px] text-slate-600">Full Access</div>
+                        </div>
+                        <div class="bg-[#131e35]/60 border border-slate-800/60 rounded-lg py-2 px-1">
+                            <div class="text-[10px] font-bold text-violet-400">FACULTY</div>
+                            <div class="text-[9px] text-slate-600">Logs & AI</div>
+                        </div>
+                        <div class="bg-[#131e35]/60 border border-slate-800/60 rounded-lg py-2 px-1">
+                            <div class="text-[10px] font-bold text-emerald-400">GUARD</div>
+                            <div class="text-[9px] text-slate-600">Gate Ops</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <p class="text-[10px] text-slate-700 text-center mt-4 tracking-wider">NexusScan AI v2.0 • Secured Authentication</p>
+        </div>
+    </div>
+
+    <!-- 🎛️ MAIN DASHBOARD (hidden until login) -->
+    <div id="mainDashboard" class="hidden flex flex-col min-h-screen">
+
+
     <!-- HEADER -->
     <header class="bg-[#0f172a] border-b border-slate-800 px-6 py-3 flex justify-between items-center text-sm sticky top-0 z-40">
         <div class="flex items-center space-x-6">
             <span class="text-[#38bdf8] font-orbitron font-bold tracking-wider text-base">NEXUSSCAN AI PRO</span>
+            <!-- 🏷️ Role Badge -->
+            <span id="roleBadge" class="hidden text-[10px] font-bold tracking-widest px-2.5 py-1 rounded-full border"></span>
             <nav class="hidden md:flex space-x-4 text-xs font-semibold">
                 <button onclick="location.reload()" class="text-[#38bdf8] border-b-2 border-[#38bdf8] pb-1">Security View</button>
-                <button onclick="accessFacultyView()" class="text-slate-400 hover:text-slate-200 transition">Faculty View</button>
+                <button onclick="openMobileGuardView()" class="text-slate-400 hover:text-slate-200 transition" data-role-hide="faculty">Guard View</button>
             </nav>
         </div>
         <div class="flex items-center space-x-3 text-slate-400">
             <input id="logSearch" type="text" placeholder="Search logs..." class="bg-[#131e35] border border-slate-700 rounded px-2.5 py-1 text-xs text-white focus:outline-none focus:border-[#38bdf8]">
             <!-- 📱 Mobile Guard View Toggle -->
-            <button onclick="openMobileGuardView()" title="Mobile Guard View"
+            <button onclick="openMobileGuardView()" title="Mobile Guard View" data-role-hide="faculty"
                 class="flex items-center gap-1.5 bg-emerald-600/20 border border-emerald-500/60 hover:bg-emerald-600/40 text-emerald-400 text-[11px] font-bold px-2.5 py-1.5 rounded transition">
                 <i data-lucide="smartphone" class="w-3.5 h-3.5"></i>
                 <span class="hidden sm:inline">Guard View</span>
+            </button>
+            <!-- 🚪 Logout Button -->
+            <button onclick="logoutUser()" title="Logout" id="logoutBtn"
+                class="flex items-center gap-1.5 bg-rose-600/20 border border-rose-500/50 hover:bg-rose-600/40 text-rose-400 text-[11px] font-bold px-2.5 py-1.5 rounded transition">
+                <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+                <span class="hidden sm:inline">Logout</span>
             </button>
             <i data-lucide="radio" class="w-4 h-4 text-[#38bdf8] animate-pulse"></i>
         </div>
@@ -81,7 +177,7 @@
                         <span>Verify Gate Pass</span>
                     </button>
 
-                    <button onclick="triggerEmergencyAlert()" class="w-full flex items-center space-x-3 bg-rose-600/20 border border-rose-500 text-rose-300 hover:bg-rose-600/40 p-2.5 rounded text-left transition animate-pulse">
+                    <button onclick="triggerEmergencyAlert()" class="w-full flex items-center space-x-3 bg-rose-600/20 border border-rose-500 text-rose-300 hover:bg-rose-600/40 p-2.5 rounded text-left transition animate-pulse" data-role-hide="faculty">
                         <i data-lucide="siren" class="w-4 h-4 text-rose-400"></i>
                         <span class="font-bold">EMERGENCY RED ALERT</span>
                     </button>
@@ -91,7 +187,7 @@
                         <span>Manual Entry</span>
                     </button>
 
-                    <button onclick="enrollNewFace()" class="w-full flex items-center space-x-3 bg-sky-500/20 border border-sky-500 text-sky-300 hover:bg-sky-500/30 p-2.5 rounded text-left transition">
+                    <button onclick="enrollNewFace()" class="w-full flex items-center space-x-3 bg-sky-500/20 border border-sky-500 text-sky-300 hover:bg-sky-500/30 p-2.5 rounded text-left transition" data-role-hide="faculty">
                         <i data-lucide="user-plus" class="w-4 h-4 text-sky-400"></i>
                         <span>Enroll New Face</span>
                     </button>
@@ -101,7 +197,7 @@
                         <span>Mark Leave</span>
                     </button>
 
-                    <button onclick="clearDatabase()" class="w-full flex items-center space-x-3 text-slate-400 hover:bg-rose-950/30 hover:text-rose-400 p-2.5 rounded text-left transition">
+                    <button onclick="clearDatabase()" class="w-full flex items-center space-x-3 text-slate-400 hover:bg-rose-950/30 hover:text-rose-400 p-2.5 rounded text-left transition" data-role-hide="faculty">
                         <i data-lucide="trash-2" class="w-4 h-4"></i>
                         <span>Clear Logs</span>
                     </button>
@@ -405,6 +501,8 @@
         <span>&copy; 2026 NexusScan AI Command Center. All systems operational.</span>
         <div>SYSTEM_LATENCY: <span class="text-emerald-400 font-bold">12ms</span></div>
     </footer>
+
+    </div> <!-- END #mainDashboard -->
 
     <script src="script.js"></script>
 </body>

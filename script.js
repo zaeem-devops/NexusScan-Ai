@@ -8,9 +8,164 @@ let counts = { present: 0, late: 0, unknown: 0 };
 let unknownDetected = false;
 let lastAnnouncement = "";
 let registeredDescriptors = [];
+let currentUserRole = null; // 'admin' | 'faculty' | 'guard'
 
 // API Base URL
 const API_BASE_URL = 'http://127.0.0.1:3000';
+
+// ============================================================
+// 🔐 LOGIN / LOGOUT / ROLE SYSTEM
+// ============================================================
+async function loginUser(event) {
+    if (event) event.preventDefault();
+
+    const username = (document.getElementById('loginUsername')?.value || '').trim();
+    const password = (document.getElementById('loginPassword')?.value || '').trim();
+    const errorEl = document.getElementById('loginError');
+    const btnText = document.getElementById('loginBtnText');
+    const btnLoader = document.getElementById('loginBtnLoader');
+
+    if (!username || !password) return;
+
+    // Show loading state
+    if (btnText) btnText.classList.add('hidden');
+    if (btnLoader) btnLoader.classList.remove('hidden');
+    if (errorEl) errorEl.classList.add('hidden');
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/auth`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            // Store session
+            sessionStorage.setItem('nx_token', data.token);
+            sessionStorage.setItem('nx_role', data.role);
+            sessionStorage.setItem('nx_user', data.username);
+
+            // Transition to dashboard
+            showDashboard(data.role);
+        } else {
+            showLoginError(data.error || 'Access Denied!');
+        }
+    } catch (err) {
+        showLoginError('Backend offline — make sure node server.js is running on port 3000!');
+    } finally {
+        if (btnText) btnText.classList.remove('hidden');
+        if (btnLoader) btnLoader.classList.add('hidden');
+    }
+}
+
+function showLoginError(message) {
+    const errorEl = document.getElementById('loginError');
+    if (errorEl) {
+        errorEl.textContent = '⛔ ' + message;
+        errorEl.classList.remove('hidden');
+        // Shake animation
+        errorEl.style.animation = 'none';
+        errorEl.offsetHeight; // trigger reflow
+        errorEl.style.animation = 'shake 0.4s ease';
+    }
+}
+
+function showDashboard(role) {
+    currentUserRole = role;
+
+    // Hide login, show dashboard
+    const loginOverlay = document.getElementById('loginOverlay');
+    const dashboard = document.getElementById('mainDashboard');
+    if (loginOverlay) loginOverlay.classList.add('hidden');
+    if (dashboard) dashboard.classList.remove('hidden');
+
+    // Apply role-based view
+    applyRoleView(role);
+
+    // Start the app (camera, face detection, etc.)
+    startApp();
+}
+
+function applyRoleView(role) {
+    // Set role badge
+    const badge = document.getElementById('roleBadge');
+    if (badge) {
+        badge.classList.remove('hidden');
+        const roleConfig = {
+            admin:   { text: '🛡️ ADMIN',   border: 'border-[#38bdf8]',  bg: 'bg-[#38bdf8]/10',  color: 'text-[#38bdf8]' },
+            faculty: { text: '🎓 FACULTY', border: 'border-violet-500', bg: 'bg-violet-500/10', color: 'text-violet-400' },
+            guard:   { text: '💂 GUARD',   border: 'border-emerald-500', bg: 'bg-emerald-500/10', color: 'text-emerald-400' }
+        };
+        const cfg = roleConfig[role] || roleConfig.admin;
+        badge.textContent = cfg.text;
+        badge.className = `text-[10px] font-bold tracking-widest px-2.5 py-1 rounded-full border ${cfg.border} ${cfg.bg} ${cfg.color}`;
+    }
+
+    // Hide elements not for this role
+    if (role === 'faculty') {
+        // Faculty: hide Emergency, Enroll, Clear, Guard View buttons
+        document.querySelectorAll('[data-role-hide="faculty"]').forEach(el => {
+            el.style.display = 'none';
+        });
+    }
+
+    if (role === 'guard') {
+        // Guard: auto-open Mobile Guard View after a short delay
+        setTimeout(() => {
+            openMobileGuardView();
+        }, 800);
+    }
+
+    // Show faculty section for admin
+    if (role === 'admin') {
+        const facultySection = document.getElementById('facultySection');
+        if (facultySection) facultySection.classList.remove('hidden');
+    }
+
+    // Refresh icons
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function logoutUser() {
+    if (!confirm('Logout from NexusScan AI?')) return;
+
+    // Clear session
+    sessionStorage.removeItem('nx_token');
+    sessionStorage.removeItem('nx_role');
+    sessionStorage.removeItem('nx_user');
+    currentUserRole = null;
+
+    // Show login, hide dashboard
+    const loginOverlay = document.getElementById('loginOverlay');
+    const dashboard = document.getElementById('mainDashboard');
+    if (loginOverlay) loginOverlay.classList.remove('hidden');
+    if (dashboard) dashboard.classList.add('hidden');
+
+    // Close any open overlays
+    closeMobileGuardView();
+    closeAiPanel();
+
+    // Clear login fields
+    const usernameEl = document.getElementById('loginUsername');
+    const passwordEl = document.getElementById('loginPassword');
+    const errorEl = document.getElementById('loginError');
+    if (usernameEl) usernameEl.value = '';
+    if (passwordEl) passwordEl.value = '';
+    if (errorEl) errorEl.classList.add('hidden');
+}
+
+// Check if already logged in (page refresh)
+function checkExistingSession() {
+    const token = sessionStorage.getItem('nx_token');
+    const role = sessionStorage.getItem('nx_role');
+    if (token && role) {
+        showDashboard(role);
+        return true;
+    }
+    return false;
+}
+
 
 // Live Dashboard Clock Loop
 setInterval(() => {
@@ -774,28 +929,10 @@ function speak(text) {
     }
 }
 
-// 🔑 Faculty View — server-side password check instead of client-side plaintext
+// 🔑 Faculty View — now handled by role-based login system
+// Kept for backward compatibility but redirects to login
 async function accessFacultyView() {
-    const password = prompt("Enter Faculty Password:");
-    if (!password) return;
-    try {
-        const res = await fetch(`${API_BASE_URL}/api/auth`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password })
-        });
-        const data = await res.json();
-        if (data.success) {
-            sessionStorage.setItem('nx_auth', data.token);
-            showToast("Welcome Prof!", "success");
-            const facultySection = document.getElementById('facultySection');
-            if (facultySection) facultySection.classList.remove('hidden');
-        } else {
-            showToast("Access Denied!", "error");
-        }
-    } catch (e) {
-        showToast("Backend offline — cannot verify!", "error");
-    }
+    showToast('Use the login system to access Faculty View!', 'warning');
 }
 
 if (document.getElementById('logSearch')) {
@@ -1095,6 +1232,14 @@ function closeMobileGuardView() {
     if (overlay) overlay.classList.add('hidden');
 }
 
-// Kickoff
+// ============================================================
+// 🚀 Kickoff — Session check first, then login or auto-start
+// ============================================================
 if (typeof lucide !== 'undefined') lucide.createIcons();
-startApp();
+
+// Only auto-start if we have an existing session
+if (!checkExistingSession()) {
+    // User needs to login — login overlay is already visible
+    // Focus username field
+    setTimeout(() => document.getElementById('loginUsername')?.focus(), 300);
+}

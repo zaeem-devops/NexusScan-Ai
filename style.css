@@ -100,3 +100,22 @@ canvas {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--primary);
 }
+
+/* 🔐 Login Error Shake Animation */
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-8px); }
+    40% { transform: translateX(8px); }
+    60% { transform: translateX(-5px); }
+    80% { transform: translateX(5px); }
+}
+
+/* Login overlay transition */
+#loginOverlay {
+    transition: opacity 0.3s ease;
+}
+
+#loginOverlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+}

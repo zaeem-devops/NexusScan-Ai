@@ -36,13 +36,27 @@ app.use(express.json({ limit: '10mb' }));
 const PORT = process.env.PORT || 3000;
 
 // 🔐 Configuration (see .env.example)
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
 const SECURITY_PHONE = process.env.SECURITY_PHONE || '03236404459';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const FACULTY_PASSWORD = process.env.FACULTY_PASSWORD || 'faculty123';
+const GUARD_PASSWORD = process.env.GUARD_PASSWORD || 'guard123';
+const JWT_SECRET = process.env.JWT_SECRET || 'nexusscan-secret-2026';
+
 // Comma-separated WhatsApp numbers allowed to send LOCK/UNLOCK/STATUS/ANNOUNCE.
 // Leave empty ONLY for demo — otherwise anyone who messages this number can lock the system.
 const ADMIN_WHITELIST = (process.env.ADMIN_WHITELIST || '')
     .split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean)
     .map(d => d.startsWith('03') ? '92' + d.substring(1) : d); // normalize 03xx → 92xx
+
+// 🔑 Role-Based User Accounts (passwords hashed at startup)
+const USERS = {
+    admin:   { role: 'admin',   passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10) },
+    faculty: { role: 'faculty', passwordHash: bcrypt.hashSync(FACULTY_PASSWORD, 10) },
+    guard:   { role: 'guard',   passwordHash: bcrypt.hashSync(GUARD_PASSWORD, 10) }
+};
 
 // 🔒 Global Security State
 let isSystemLocked = false;
@@ -208,13 +222,31 @@ function isAdminChat(chatId) {
 // 📩 API Endpoints
 // ============================================================
 
-// 🔑 Faculty / Admin Login
-app.post('/api/auth', (req, res) => {
-    const { password } = req.body || {};
-    if (password === ADMIN_PASSWORD) {
-        return res.json({ success: true, token: Buffer.from(`nx-${Date.now()}`).toString('base64') });
+// 🔑 Role-Based Login Authentication
+app.post('/api/auth', async (req, res) => {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+        return res.status(400).json({ success: false, error: 'Username and password required!' });
     }
-    return res.status(401).json({ success: false, error: 'Access Denied!' });
+
+    const user = USERS[username.toLowerCase()];
+    if (!user) {
+        return res.status(401).json({ success: false, error: 'Invalid username!' });
+    }
+
+    const isValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isValid) {
+        return res.status(401).json({ success: false, error: 'Incorrect password!' });
+    }
+
+    const token = jwt.sign(
+        { username: username.toLowerCase(), role: user.role },
+        JWT_SECRET,
+        { expiresIn: '12h' }
+    );
+
+    console.log(`🔑 ${user.role.toUpperCase()} login: ${username}`);
+    return res.json({ success: true, token, role: user.role, username: username.toLowerCase() });
 });
 
 // 📩 Smart Visitor Approval Endpoint (request now persisted for reply mapping)
