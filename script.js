@@ -11,9 +11,19 @@ let lastAnnouncement = "";
 let registeredDescriptors = [];
 let currentUserRole = null; // 'admin' | 'faculty' | 'guard'
 
-const API_BASE_URL = (typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('http'))
-    ? window.location.origin
-    : 'http://127.0.0.1:3000';
+const API_BASE_URL = (() => {
+    if (typeof window === 'undefined' || !window.location) return 'http://127.0.0.1:3000';
+
+    const { hostname, origin, port, protocol } = window.location;
+    if (!protocol.startsWith('http')) return 'http://127.0.0.1:3000';
+    if (port === '3000' || !port) return origin;
+
+    // Live Server and similar tools serve the page on a different port.
+    const backendHost = hostname === 'localhost' || hostname === '127.0.0.1'
+        ? hostname
+        : '127.0.0.1';
+    return `http://${backendHost}:3000`;
+})();
 function apiRequest(url, options = {}) {
     const headers = new Headers(options.headers || {});
     const token = sessionStorage.getItem('nx_token');

@@ -37,6 +37,25 @@
 
 ---
 
+## ▶️ Run Locally
+
+From the project folder, install dependencies and start the backend:
+
+```bash
+npm install
+node server.js
+```
+
+Keep that terminal running, then open `http://127.0.0.1:3000` in a browser. The default demo accounts are:
+
+| Username | Password |
+|---|---|
+| `admin` | `admin123` |
+| `faculty` | `faculty123` |
+| `guard` | `guard123` |
+
+The frontend also supports Live Server or another local static server; it automatically sends API requests to backend port `3000`.
+
 ## 🚀 Key Innovations & Features
 
 1. **Anti-Deepfake Liveness Defense:** Uses facial landmark geometry and dynamic Eye Aspect Ratio (EAR) blink detection to block photo/video spoofing attacks.
@@ -56,7 +75,7 @@
 
 | Method | Endpoint | Auth | Description | Payload Example |
 |---|---|---|---|---|
-| `POST` | `/api/auth/login` | Public (Rate Limited) | Authenticate user & issue JWT | `{"username": "admin", "password": "..."}` |
+| `POST` | `/api/auth` | Public | Authenticate user & issue JWT | `{"username": "admin", "password": "..."}` |
 | `GET` | `/api/auth/me` | Bearer JWT | Verify current session identity | _None_ |
 | `POST` | `/api/biometrics/enroll` | Admin JWT | Enroll face with privacy consent | `{"name": "Zaeem", "role": "Student", "descriptors": [...], "consent": true}` |
 | `GET` | `/api/biometrics/list` | Public | List all enrolled profiles | _None_ |
