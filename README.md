@@ -41,7 +41,6 @@ MongoDB, Gemini, and WhatsApp are optional for a basic demo. The dashboard and l
 Open PowerShell or a terminal in the project directory:
 
 ```powershell
-cd "D:\xampp\htdocs\NexusScan Ai"
 npm install
 ```
 
