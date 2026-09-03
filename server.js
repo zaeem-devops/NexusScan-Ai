@@ -8,7 +8,6 @@ const qrcode = require('qrcode-terminal');
 const XLSX = require('xlsx');
 require('dotenv').config();
 
-// 🤖 Gemini AI Integration
 let geminiModel = null;
 try {
     const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -35,7 +34,6 @@ app.use(express.json({ limit: '10mb' }));
 
 const PORT = process.env.PORT || 3000;
 
-// 🔐 Configuration (see .env.example)
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
@@ -45,26 +43,19 @@ const FACULTY_PASSWORD = process.env.FACULTY_PASSWORD || 'faculty123';
 const GUARD_PASSWORD = process.env.GUARD_PASSWORD || 'guard123';
 const JWT_SECRET = process.env.JWT_SECRET || 'nexusscan-secret-2026';
 
-// Comma-separated WhatsApp numbers allowed to send LOCK/UNLOCK/STATUS/ANNOUNCE.
-// Leave empty ONLY for demo — otherwise anyone who messages this number can lock the system.
 const ADMIN_WHITELIST = (process.env.ADMIN_WHITELIST || '')
     .split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean)
     .map(d => d.startsWith('03') ? '92' + d.substring(1) : d); // normalize 03xx → 92xx
 
-// 🔑 Role-Based User Accounts (passwords hashed at startup)
 const USERS = {
-    admin:   { role: 'admin',   passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10) },
+    admin: { role: 'admin', passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10) },
     faculty: { role: 'faculty', passwordHash: bcrypt.hashSync(FACULTY_PASSWORD, 10) },
-    guard:   { role: 'guard',   passwordHash: bcrypt.hashSync(GUARD_PASSWORD, 10) }
+    guard: { role: 'guard', passwordHash: bcrypt.hashSync(GUARD_PASSWORD, 10) }
 };
 
-// 🔒 Global Security State
 let isSystemLocked = false;
 let currentAnnouncement = "";
 
-// ============================================================
-// 🗄️ MongoDB Models + Hybrid Memory Fallback
-// ============================================================
 const AttendanceSchema = new mongoose.Schema({
     name: String,
     status: String,           // Present | Late | Leave | Denied
@@ -94,7 +85,6 @@ const Attendance = mongoose.model('Attendance', AttendanceSchema);
 const VisitorPass = mongoose.model('VisitorPass', VisitorPassSchema);
 const Threat = mongoose.model('Threat', ThreatSchema);
 
-// In-memory fallback when MongoDB is unavailable (Hybrid Memory Mode)
 const memoryStore = { attendance: [], passes: [], threats: [] };
 let mongoReady = false;
 
@@ -104,7 +94,6 @@ mongoose.connect(MONGO_URI)
     .then(() => { mongoReady = true; console.log('✅ MongoDB Connected Successfully!'); })
     .catch(() => console.log('⚠️ Local MongoDB not detected! Running server in Hybrid Memory Mode.'));
 
-// Storage helpers — Mongo when connected, memory otherwise
 async function saveAttendance(record) {
     if (mongoReady) { await Attendance.create(record); return; }
     record.date = record.date || new Date().toDateString();
@@ -164,9 +153,6 @@ async function countThreatsToday() {
     return memoryStore.threats.filter(t => new Date(t.createdAt).toDateString() === today).length;
 }
 
-// ============================================================
-// 📱 WhatsApp Engine
-// ============================================================
 const whatsappClient = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
@@ -209,7 +195,6 @@ function formatWhatsAppNumber(phone) {
 
 function isAdminChat(chatId) {
     const digits = String(chatId).replace(/\D/g, '');
-    // The connected account always controls itself (self-sent commands)
     const ownId = whatsappClient.info && whatsappClient.info.wid
         ? String(whatsappClient.info.wid._serialized).replace(/\D/g, '')
         : '';
@@ -218,18 +203,15 @@ function isAdminChat(chatId) {
     return ADMIN_WHITELIST.some(admin => digits.startsWith(admin));
 }
 
-// ============================================================
-// 📩 API Endpoints
-// ============================================================
 
-// 🔑 Role-Based Login Authentication
 app.post('/api/auth', async (req, res) => {
     const { username, password } = req.body || {};
-    if (!username || !password) {
+    const normalizedUsername = String(username || '').trim().toLowerCase();
+    if (!normalizedUsername || !password) {
         return res.status(400).json({ success: false, error: 'Username and password required!' });
     }
 
-    const user = USERS[username.toLowerCase()];
+    const user = USERS[normalizedUsername];
     if (!user) {
         return res.status(401).json({ success: false, error: 'Invalid username!' });
     }
@@ -245,17 +227,16 @@ app.post('/api/auth', async (req, res) => {
         { expiresIn: '12h' }
     );
 
-    console.log(`🔑 ${user.role.toUpperCase()} login: ${username}`);
-    return res.json({ success: true, token, role: user.role, username: username.toLowerCase() });
+    console.log(`🔑 ${user.role.toUpperCase()} login: ${normalizedUsername}`);
+    return res.json({ success: true, token, role: user.role, username: normalizedUsername });
 });
 
-// 📩 Smart Visitor Approval Endpoint (request now persisted for reply mapping)
 app.post('/api/visitor-request', async (req, res) => {
     try {
         const { visitorName, cnic, hostPhone, purpose } = req.body || {};
 
         if (!visitorName || !cnic || !hostPhone || !purpose) {
-            return res.status(400).json({ success: false, error: 'Tamam fields require hain!' });
+            return res.status(400).json({ success: false, error: 'Please complete all required fields.' });
         }
 
         const formattedPhone = formatWhatsAppNumber(hostPhone);
@@ -286,7 +267,6 @@ app.post('/api/visitor-request', async (req, res) => {
     }
 });
 
-// 🎫 Gate Pass Verification (guard enters NX-XXXX at gate)
 app.post('/api/verify-pass', async (req, res) => {
     try {
         const passCode = String((req.body || {}).passCode || '').trim().toUpperCase();
@@ -320,7 +300,6 @@ app.post('/api/verify-pass', async (req, res) => {
     }
 });
 
-// 📩 Attendance Dispatcher (persisted + duplicate-safe)
 app.post('/api/attendance', async (req, res) => {
     try {
         const { name, status, phone, time } = req.body || {};
@@ -354,7 +333,6 @@ app.post('/api/attendance', async (req, res) => {
     }
 });
 
-// 🚨 Emergency Alert — now with live threat snapshot attachment
 app.post('/api/threat-alert', async (req, res) => {
     try {
         const { reason, snapshot } = req.body || {};
@@ -381,7 +359,6 @@ app.post('/api/threat-alert', async (req, res) => {
     }
 });
 
-// 📊 Server Logs — frontend restores real data on load (no localStorage-only world)
 app.get('/api/logs', async (req, res) => {
     const attendance = await getAllAttendance();
     const today = new Date().toDateString();
@@ -397,7 +374,6 @@ app.get('/api/logs', async (req, res) => {
     });
 });
 
-// 🏷️ Enrolled face labels — dynamic registry for frontend
 app.get('/api/labels', (req, res) => {
     try {
         const dir = path.join(__dirname, 'labels');
@@ -409,7 +385,6 @@ app.get('/api/labels', (req, res) => {
     }
 });
 
-// 📡 System Status & Announcement Check (Frontend Polling)
 app.get('/api/system-status', (req, res) => {
     res.json({
         locked: isSystemLocked,
@@ -417,7 +392,6 @@ app.get('/api/system-status', (req, res) => {
     });
 });
 
-// 📥 Excel Export — real endpoint for the sidebar button
 app.get('/api/export/excel', async (req, res) => {
     try {
         const rows = (await getAllAttendance()).map(r => ({
@@ -436,15 +410,11 @@ app.get('/api/export/excel', async (req, res) => {
     }
 });
 
-// ============================================================
-// 🤖 Gemini AI Security Assistant Endpoint
-// ============================================================
 app.post('/api/ask-ai', async (req, res) => {
     try {
         const { question, context } = req.body || {};
         if (!question) return res.status(400).json({ success: false, error: 'Question required!' });
 
-        // Build live security context for the AI
         const attendance = await getAllAttendance();
         const today = new Date().toDateString();
         const todayRecords = attendance.filter(r => r.date === today);
@@ -464,7 +434,6 @@ app.post('/api/ask-ai', async (req, res) => {
 
 Answer the security officer's question concisely (2-3 sentences max). Be professional and direct. If asked about locking/unlocking, explain the WhatsApp command system.`;
 
-        // Try Gemini first
         if (geminiModel) {
             try {
                 const prompt = `${systemContext}\n\nSecurity Officer's Question: "${question}"`;
@@ -476,7 +445,6 @@ Answer the security officer's question concisely (2-3 sentences max). Be profess
             }
         }
 
-        // 🧠 Smart Local AI Fallback (no API key needed)
         const q = question.toLowerCase();
         let answer = '';
 
@@ -513,26 +481,17 @@ Answer the security officer's question concisely (2-3 sentences max). Be profess
     }
 });
 
-// ============================================================
-// 💬 WhatsApp Admin Command Center (whitelist-protected)
-// handleMessage processes a command whether it came from someone
-// else ('message' event) or was self-sent from the connected
-// account ('message_create' with fromMe). Self-sends are needed
-// when the admin controls the system from the same phone.
-// ============================================================
 async function handleMessage(msg) {
     try {
         const rawText = (msg.body || '').trim();
         const upperText = rawText.toUpperCase();
         const admin = isAdminChat(msg.from);
 
-        // Only log recognized commands to prevent printing personal chats to the terminal
         const isCommand = ['STATUS', 'LOCK', 'UNLOCK', '1', '2'].includes(upperText) || upperText.startsWith('ANNOUNCE ');
         if (isCommand) {
             console.log(`📨 Incoming WhatsApp command from ${msg.from}: "${rawText}"`);
         }
 
-        // Admin-only commands
         if (upperText === 'STATUS' || upperText === 'LOCK' || upperText === 'UNLOCK' || upperText.startsWith('ANNOUNCE ')) {
             if (!admin) {
                 await msg.reply('⛔ *ACCESS DENIED:* This number is not an authorized NexusScan admin.');
@@ -541,7 +500,6 @@ async function handleMessage(msg) {
             }
         }
 
-        // 🔊 Voice Announcement Command
         if (upperText.startsWith('ANNOUNCE ')) {
             currentAnnouncement = rawText.substring(9);
             await msg.reply(`📢 *Voice Announcement Triggered:* "${currentAnnouncement}"`);
@@ -550,7 +508,6 @@ async function handleMessage(msg) {
             return;
         }
 
-        // 1. STATUS Command
         if (upperText === 'STATUS') {
             const threats = await countThreatsToday();
             const statusReport = `📊 *NexusScan System Live Status*\n\n` +
@@ -566,7 +523,6 @@ async function handleMessage(msg) {
             return;
         }
 
-        // 2. LOCK Command
         if (upperText === 'LOCK') {
             isSystemLocked = true;
             await msg.reply('🔴 *EMERGENCY LOCKDOWN ACTIVATED!* Scanner disabled at Main Gate.');
@@ -574,7 +530,6 @@ async function handleMessage(msg) {
             return;
         }
 
-        // 3. UNLOCK Command
         if (upperText === 'UNLOCK') {
             isSystemLocked = false;
             await msg.reply('🟢 *LOCKDOWN RELEASED.* NexusScan normal operations resumed.');
@@ -582,7 +537,6 @@ async function handleMessage(msg) {
             return;
         }
 
-        // 4. Visitor Approval Responses — mapped to the PENDING request of THIS host
         if (upperText === '1' || upperText === '2') {
             const hostDigits = String(msg.from).replace(/\D/g, '');
             const pending = await findPendingPassForHost(hostDigits);
@@ -603,7 +557,6 @@ async function handleMessage(msg) {
                     `Show this code to Main Gate Security Guard for verification.`;
                 await msg.reply(approvalMsg);
 
-                // --- NEW: SEND TO GUARD'S PHONE AUTOMATICALLY ---
                 const guardNumber = formatWhatsAppNumber(SECURITY_PHONE);
                 const hostNumber = String(msg.from).replace('@c.us', '');
                 const guardAlertMsg = `🛂 *GATE ALERT: Visitor Approved*\n\n` +
@@ -611,11 +564,10 @@ async function handleMessage(msg) {
                     `🪪 *Pass Code:* ${passCode}\n` +
                     `📱 *Approved By:* ${hostNumber}\n\n` +
                     `Please allow entry.`;
-                
+
                 if (whatsappClient.info && msg.from !== guardNumber) {
                     await whatsappClient.sendMessage(guardNumber, guardAlertMsg);
                 }
-                // ------------------------------------------------
 
                 console.log(`✅ Visitor ${pending.visitorName} approved by ${msg.from} — Pass ${passCode}`);
             } else {
@@ -631,21 +583,27 @@ async function handleMessage(msg) {
     }
 }
 
-// Messages received from OTHER people
 whatsappClient.on('message', handleMessage);
 
-// Messages the connected account sends to ITSELF ("Message yourself").
-// Needed when the admin sends LOCK/UNLOCK/STATUS from the same phone
-// that runs the system — those arrive with fromMe=true.
 whatsappClient.on('message_create', (msg) => {
     if (msg.fromMe) handleMessage(msg);
 });
 
-// ============================================================
-// 🚀 Startup
-// ============================================================
 app.listen(PORT, '127.0.0.1', () => {
     console.log(`🚀 NexusScan AI Backend Engine Running on http://127.0.0.1:${PORT}`);
 });
 
-whatsappClient.initialize();
+process.on('uncaughtException', error => {
+    if (error.message.includes('browser is already running for')) {
+        console.warn(`⚠️ WhatsApp service unavailable: ${error.message}`);
+        console.warn('Authentication and dashboard APIs remain available.');
+        return;
+    }
+    console.error('Fatal server error:', error);
+    process.exitCode = 1;
+});
+
+whatsappClient.initialize().catch(error => {
+    console.warn(`⚠️ WhatsApp service unavailable: ${error.message}`);
+    console.warn('Authentication and dashboard APIs remain available.');
+});

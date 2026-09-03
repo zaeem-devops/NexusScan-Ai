@@ -15,16 +15,13 @@
 <body class="text-slate-200 min-h-screen flex flex-col justify-between bg-[#0b111e]">
 
 
-    <!-- 🔐 LOGIN OVERLAY -->
     <div id="loginOverlay" class="fixed inset-0 z-[100] bg-[#080d17] flex items-center justify-center">
-        <!-- Animated Background Grid -->
         <div class="absolute inset-0 overflow-hidden pointer-events-none">
             <div class="absolute inset-0" style="background-image: radial-gradient(circle at 25% 25%, rgba(56,189,248,0.05) 0%, transparent 50%), radial-gradient(circle at 75% 75%, rgba(139,92,246,0.05) 0%, transparent 50%);"></div>
             <div class="absolute top-0 left-0 w-full h-full" style="background-image: linear-gradient(rgba(56,189,248,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(56,189,248,0.03) 1px, transparent 1px); background-size: 60px 60px;"></div>
         </div>
 
         <div class="relative w-full max-w-md px-6">
-            <!-- Logo & Branding -->
             <div class="text-center mb-8">
                 <div class="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-[#38bdf8]/20 to-violet-500/20 border border-[#38bdf8]/30 mb-4" style="box-shadow: 0 0 40px rgba(56,189,248,0.15)">
                     <svg class="w-10 h-10 text-[#38bdf8]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
@@ -35,7 +32,6 @@
                 <p class="text-xs text-slate-500 mt-1.5 tracking-widest">PHYSICAL SECURITY COMMAND CENTER</p>
             </div>
 
-            <!-- Login Card -->
             <div class="bg-[#0f172a]/90 backdrop-blur-xl border border-slate-700/60 rounded-2xl p-6 space-y-5" style="box-shadow: 0 25px 50px rgba(0,0,0,0.5), 0 0 0 1px rgba(56,189,248,0.05)">
                 <div class="text-center">
                     <h2 class="text-sm font-bold text-slate-200 tracking-wider">SYSTEM ACCESS</h2>
@@ -65,11 +61,13 @@
                                 </svg>
                             </div>
                             <input id="loginPassword" type="password" placeholder="Enter your password" required autocomplete="current-password"
-                                class="w-full bg-[#131e35] border border-slate-700/80 rounded-xl pl-10 pr-4 py-3 text-sm text-white focus:outline-none focus:border-[#38bdf8] focus:ring-1 focus:ring-[#38bdf8]/30 transition placeholder-slate-600">
+                                class="w-full bg-[#131e35] border border-slate-700/80 rounded-xl pl-10 pr-10 py-3 text-sm text-white focus:outline-none focus:border-[#38bdf8] focus:ring-1 focus:ring-[#38bdf8]/30 transition placeholder-slate-600">
+                            <button type="button" id="togglePasswordButton" onclick="togglePasswordVisibility()" aria-label="Show password" title="Show password" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-[#38bdf8] transition">
+                                <i data-lucide="eye" class="w-4 h-4"></i>
+                            </button>
                         </div>
                     </div>
 
-                    <!-- Error Message -->
                     <div id="loginError" class="hidden bg-rose-950/60 border border-rose-500/40 text-rose-400 text-xs p-2.5 rounded-lg text-center font-semibold"></div>
 
                     <button type="submit" id="loginBtn"
@@ -79,7 +77,6 @@
                     </button>
                 </form>
 
-                <!-- Role Hints -->
                 <div class="border-t border-slate-800 pt-4">
                     <div class="text-[10px] text-slate-600 tracking-wider text-center mb-2">AVAILABLE ROLES</div>
                     <div class="grid grid-cols-3 gap-2 text-center">
@@ -103,15 +100,12 @@
         </div>
     </div>
 
-    <!-- 🎛️ MAIN DASHBOARD (hidden until login) -->
     <div id="mainDashboard" class="hidden flex flex-col min-h-screen">
 
 
-        <!-- HEADER -->
         <header class="bg-[#0f172a] border-b border-slate-800 px-6 py-3 flex justify-between items-center text-sm sticky top-0 z-40">
             <div class="flex items-center space-x-6">
                 <span class="text-[#38bdf8] font-orbitron font-bold tracking-wider text-base">NEXUSSCAN AI PRO</span>
-                <!-- 🏷️ Role Badge -->
                 <span id="roleBadge" class="hidden text-[10px] font-bold tracking-widest px-2.5 py-1 rounded-full border"></span>
                 <nav class="hidden md:flex space-x-4 text-xs font-semibold">
                     <button onclick="location.reload()" class="text-[#38bdf8] border-b-2 border-[#38bdf8] pb-1">Security View</button>
@@ -120,12 +114,10 @@
             </div>
             <div class="flex items-center space-x-3 text-slate-400">
                 <input id="logSearch" type="text" placeholder="Search logs..." class="bg-[#131e35] border border-slate-700 rounded px-2.5 py-1 text-xs text-white focus:outline-none focus:border-[#38bdf8]">
-                <!-- 📱 Mobile Guard View Toggle -->
                 <button onclick="openMobileGuardView()" title="Mobile Guard View" data-role-hide="faculty" class="flex items-center gap-1.5 bg-emerald-600/20 border border-emerald-500/60 hover:bg-emerald-600/40 text-emerald-400 text-[11px] font-bold px-2.5 py-1.5 rounded transition">
                     <i data-lucide="smartphone" class="w-3.5 h-3.5"></i>
                     <span class="hidden sm:inline">Guard View</span>
                 </button>
-                <!-- 🚪 Logout Button -->
                 <button onclick="logoutUser()" title="Logout" id="logoutBtn" class="flex items-center gap-1.5 bg-rose-600/20 border border-rose-500/50 hover:bg-rose-600/40 text-rose-400 text-[11px] font-bold px-2.5 py-1.5 rounded transition">
                     <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
                     <span class="hidden sm:inline">Logout</span>
@@ -134,10 +126,8 @@
             </div>
         </header>
 
-        <!-- MAIN WRAPPER -->
         <div class="flex flex-1 h-[calc(100vh-90px)] overflow-hidden">
 
-            <!-- LEFT SIDEBAR -->
             <aside class="w-64 bg-[#0f172a] border-r border-slate-800 p-4 flex flex-col justify-between overflow-y-auto">
                 <div class="space-y-4">
                     <div class="bg-[#131e35] p-3 rounded-lg border border-slate-800">
@@ -155,7 +145,6 @@
                         <div class="flex justify-between"><span>Present:</span> <span id="presentStat" class="text-emerald-400 font-bold">0</span></div>
                         <div class="flex justify-between"><span>Late Today:</span> <span id="lateStat" class="text-amber-400 font-bold">0</span></div>
                         <div class="flex justify-between"><span>Threats Detected:</span> <span id="unknownStat" class="text-rose-500 font-bold">0</span></div>
-                        <!-- 📊 Live Analytics Mini Chart -->
                         <div class="pt-2 mt-1 border-t border-slate-700/60">
                             <div class="text-[10px] text-slate-500 font-bold tracking-wider mb-2">LIVE ANALYTICS</div>
                             <div class="relative" style="height:130px">
@@ -164,10 +153,7 @@
                         </div>
                     </div>
 
-                    <!-- ACTIONS NAV -->
                     <nav class="space-y-2 text-xs font-semibold">
-                        <!-- 🎙️ NEW FEATURE: AI Voice Guard Button -->
-                        <!-- 🤖 AI Chat + Voice Assistant Panel Button -->
                         <button onclick="openAiPanel()" class="w-full flex items-center space-x-3 bg-indigo-600/30 border border-indigo-500 text-indigo-300 hover:bg-indigo-600/50 p-2.5 rounded text-left transition shadow-lg group">
                             <i data-lucide="bot" class="w-4 h-4 text-indigo-400 group-hover:scale-110 transition-transform animate-pulse"></i>
                             <span class="font-bold">AI Security Assistant</span>
@@ -219,17 +205,14 @@
                 </a>
             </aside>
 
-            <!-- CENTER VIDEO SCANNER AREA -->
             <main class="flex-1 p-6 flex flex-col space-y-4 overflow-hidden relative">
                 <div class="flex justify-between items-center text-[11px] font-mono tracking-widest text-slate-400 px-1">
                     <span class="font-bold text-slate-200">SECURITY_NODE_01 <span class="ml-2 text-emerald-400 text-[9px] bg-emerald-950 px-1.5 py-0.5 rounded border border-emerald-800">ACTIVE CAMERA</span></span>
                     <span id="liveClock">00:00:00 AM</span>
                 </div>
 
-                <!-- CAMERA WRAPPER WITH THREAT BANNER OVERLAY -->
                 <div class="scanner-wrapper bg-black flex-1 rounded-xl border border-slate-800 relative overflow-hidden flex items-center justify-center">
 
-                    <!-- 🚨 Red Threat Alert Overlay -->
                     <div id="threatBanner" class="hidden absolute top-4 left-4 right-4 bg-rose-950/90 border-2 border-rose-500 text-rose-200 p-3 rounded-lg z-30 flex items-center justify-between shadow-2xl backdrop-blur">
                         <div class="flex items-center space-x-3">
                             <i data-lucide="shield-alert" class="w-6 h-6 text-rose-500 animate-bounce"></i>
@@ -241,13 +224,12 @@
                         <span class="text-xs font-mono bg-rose-900 px-2 py-1 rounded text-rose-300 border border-rose-700">WHATSAPP DISPATCHED</span>
                     </div>
 
-                    <!-- ⚠️ Camera Offline Diagnostic Overlay -->
                     <div id="cameraOffline" class="hidden absolute inset-0 z-30 bg-slate-950/95 flex flex-col items-center justify-center text-center p-6 space-y-3">
                         <i data-lucide="camera-off" class="w-12 h-12 text-rose-500"></i>
                         <div class="text-sm font-bold tracking-widest text-rose-400 font-orbitron">CAMERA OFFLINE</div>
                         <div class="text-xs text-slate-400 max-w-sm leading-relaxed">
-                            Detection ke liye camera permission zaroori hai.<br>
-                            Browser address bar mein <span class="text-white font-semibold">lock icon → Site settings → Camera → Allow</span> karein, phir page refresh karein.
+                            Camera permission is required for detection.<br>
+                            In your browser address bar, select <span class="text-white font-semibold">lock icon → Site settings → Camera → Allow</span>, then refresh the page.
                         </div>
                     </div>
 
@@ -256,7 +238,6 @@
                         <video id="video" autoplay muted playsinline class="w-full h-full object-cover"></video>
                     </div>
 
-                    <!-- 📹 CAM 02 PIP — auto-shows when a second physical camera is detected -->
                     <div id="cam2Pip" class="hidden absolute bottom-4 right-4 w-48 rounded-lg overflow-hidden border-2 border-[#38bdf8]/60 shadow-2xl z-20 bg-black">
                         <video id="video2" autoplay muted playsinline class="w-full h-28 object-cover"></video>
                         <div class="text-[9px] font-mono text-[#38bdf8] bg-[#0f172a] px-2 py-0.5 flex justify-between items-center">
@@ -266,7 +247,6 @@
                 </div>
             </main>
 
-            <!-- RIGHT SIDEBAR (LOGS) -->
             <aside class="w-80 bg-[#0f172a] border-l border-slate-800 p-4 flex flex-col justify-between overflow-hidden">
                 <div class="flex flex-col flex-1 overflow-hidden">
                     <div class="flex justify-between items-center pb-3 border-b border-slate-800 mb-3">
@@ -291,7 +271,6 @@
 
         </div>
 
-        <!-- SMART VISITOR ENTRY MODAL -->
         <div id="visitorModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div class="bg-[#0f172a] border border-slate-700 w-full max-w-md rounded-xl p-6 space-y-4 shadow-2xl">
                 <div class="flex justify-between items-center border-b border-slate-800 pb-3">
@@ -329,7 +308,6 @@
             </div>
         </div>
 
-        <!-- 🎫 GATE PASS VERIFICATION MODAL (Guard Console) -->
         <div id="passModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div class="bg-[#0f172a] border border-slate-700 w-full max-w-sm rounded-xl p-6 space-y-4 shadow-2xl">
                 <div class="flex justify-between items-center border-b border-slate-800 pb-3">
@@ -357,102 +335,92 @@
             </div>
         </div>
 
-        <!-- 📱 MOBILE GUARD VIEW OVERLAY -->
-        <div id="mobileGuardOverlay" class="hidden fixed inset-0 z-[60] bg-[#080d17] flex flex-col" style="font-family:'Poppins',sans-serif">
+        <div id="mobileGuardOverlay" class="hidden fixed inset-0 z-[60] guard-console" style="font-family:'Poppins',sans-serif">
 
-            <!-- Mobile Header -->
-            <div class="flex items-center justify-between px-4 py-3 bg-[#0f172a] border-b border-emerald-900/60" style="box-shadow:0 2px 20px rgba(52,211,153,0.08)">
+            <div class="guard-console-header">
                 <div class="flex items-center gap-3">
-                    <div class="w-8 h-8 rounded-full bg-emerald-600/30 border border-emerald-500/50 flex items-center justify-center">
+                    <div class="guard-brand-mark">
                         <i data-lucide="shield-check" class="w-4 h-4 text-emerald-400"></i>
                     </div>
                     <div>
-                        <div class="text-xs font-bold text-emerald-400 font-orbitron tracking-widest">NEXUSSCAN GUARD</div>
-                        <div class="text-[10px] text-slate-500 flex items-center gap-1">
+                        <div class="guard-console-title">NEXUSSCAN GUARD</div>
+                        <div class="guard-console-subtitle">
                             <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block"></span>
                             LIVE · MAIN GATE
                         </div>
                     </div>
                 </div>
-                <div class="flex items-center gap-2">
-                    <span id="mobileGuardClock" class="text-[11px] font-mono text-slate-400">00:00</span>
-                    <button onclick="closeMobileGuardView()" class="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-700 transition">
+                <div class="guard-header-tools">
+                    <span id="mobileGuardClock" class="guard-clock">00:00</span>
+                    <button onclick="closeMobileGuardView()" class="guard-close-button" aria-label="Close Guard View">
                         <i data-lucide="x" class="w-4 h-4"></i>
                     </button>
                 </div>
             </div>
 
-            <!-- Live Stats Bar -->
-            <div class="grid grid-cols-3 gap-px bg-slate-800/40 border-b border-slate-800">
-                <div class="bg-[#0b111e] px-3 py-2.5 text-center">
-                    <div class="text-lg font-bold text-emerald-400" id="mgPresent">0</div>
-                    <div class="text-[10px] text-slate-500 tracking-wider">PRESENT</div>
+            <div class="guard-stats-grid">
+                <div class="guard-stat guard-stat-present">
+                    <div class="guard-stat-value" id="mgPresent">0</div>
+                    <div class="guard-stat-label">PRESENT</div>
                 </div>
-                <div class="bg-[#0b111e] px-3 py-2.5 text-center border-x border-slate-800">
-                    <div class="text-lg font-bold text-amber-400" id="mgLate">0</div>
-                    <div class="text-[10px] text-slate-500 tracking-wider">LATE</div>
+                <div class="guard-stat guard-stat-late">
+                    <div class="guard-stat-value" id="mgLate">0</div>
+                    <div class="guard-stat-label">LATE</div>
                 </div>
-                <div class="bg-[#0b111e] px-3 py-2.5 text-center">
-                    <div class="text-lg font-bold text-rose-500" id="mgThreats">0</div>
-                    <div class="text-[10px] text-slate-500 tracking-wider">THREATS</div>
+                <div class="guard-stat guard-stat-threats">
+                    <div class="guard-stat-value" id="mgThreats">0</div>
+                    <div class="guard-stat-label">THREATS</div>
                 </div>
             </div>
 
-            <!-- Camera Mirror Feed -->
-            <div class="relative bg-black" style="height:38vh">
-                <!-- Scanning laser line -->
-                <div class="laser-line"></div>
-                <!-- Corner brackets overlay -->
-                <div class="absolute inset-0 z-10 pointer-events-none">
-                    <div class="absolute top-3 left-3 w-8 h-8 border-t-2 border-l-2 border-emerald-500/70 rounded-tl"></div>
-                    <div class="absolute top-3 right-3 w-8 h-8 border-t-2 border-r-2 border-emerald-500/70 rounded-tr"></div>
-                    <div class="absolute bottom-3 left-3 w-8 h-8 border-b-2 border-l-2 border-emerald-500/70 rounded-bl"></div>
-                    <div class="absolute bottom-3 right-3 w-8 h-8 border-b-2 border-r-2 border-emerald-500/70 rounded-br"></div>
-                    <!-- Status chip -->
-                    <div class="absolute top-3 left-1/2 -translate-x-1/2 bg-black/70 border border-emerald-700/60 rounded-full px-3 py-0.5 text-[10px] font-mono text-emerald-400 flex items-center gap-1.5">
-                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> AI SCANNING
+            <div class="guard-camera-panel">
+                <div class="guard-section-label"><span></span> CAMERA FEED <b>NODE 01</b></div>
+                <div class="guard-camera-stage">
+                    <div class="laser-line"></div>
+                    <div class="absolute inset-0 z-10 pointer-events-none">
+                        <div class="absolute top-3 left-3 w-8 h-8 border-t-2 border-l-2 border-emerald-500/70 rounded-tl"></div>
+                        <div class="absolute top-3 right-3 w-8 h-8 border-t-2 border-r-2 border-emerald-500/70 rounded-tr"></div>
+                        <div class="absolute bottom-3 left-3 w-8 h-8 border-b-2 border-l-2 border-emerald-500/70 rounded-bl"></div>
+                        <div class="absolute bottom-3 right-3 w-8 h-8 border-b-2 border-r-2 border-emerald-500/70 rounded-br"></div>
+                        <div class="absolute top-3 left-1/2 -translate-x-1/2 bg-black/70 border border-emerald-700/60 rounded-full px-3 py-0.5 text-[10px] font-mono text-emerald-400 flex items-center gap-1.5">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> AI SCANNING
+                        </div>
                     </div>
+                    <video id="mgVideo" autoplay muted playsinline class="w-full h-full object-cover opacity-90"></video>
+                    <div class="absolute bottom-2 left-3 text-[10px] font-mono text-emerald-500/70">ANTI-SPOOF: ACTIVE</div>
                 </div>
-                <video id="mgVideo" autoplay muted playsinline class="w-full h-full object-cover opacity-90"></video>
-                <!-- Liveness indicator -->
-                <div class="absolute bottom-2 left-3 text-[10px] font-mono text-emerald-500/70">ANTI-SPOOF: ACTIVE</div>
             </div>
 
-            <!-- Quick Action Buttons -->
-            <div class="grid grid-cols-2 gap-2 px-3 py-2.5">
-                <button onclick="openVisitorModal(); closeMobileGuardView()" class="flex items-center justify-center gap-2 bg-cyan-600/20 border border-cyan-500/50 text-cyan-300 text-xs font-bold py-2.5 rounded-xl hover:bg-cyan-600/30 transition active:scale-95">
+            <div class="guard-actions">
+                <button onclick="openVisitorModal(); closeMobileGuardView()" class="guard-action guard-action-cyan">
                     <i data-lucide="user-check" class="w-4 h-4"></i> Visitor Entry
                 </button>
-                <button onclick="openPassModal(); closeMobileGuardView()" class="flex items-center justify-center gap-2 bg-violet-600/20 border border-violet-500/50 text-violet-300 text-xs font-bold py-2.5 rounded-xl hover:bg-violet-600/30 transition active:scale-95">
+                <button onclick="openPassModal(); closeMobileGuardView()" class="guard-action guard-action-violet">
                     <i data-lucide="ticket-check" class="w-4 h-4"></i> Verify Pass
                 </button>
-                <button onclick="openAiPanel(); closeMobileGuardView()" class="flex items-center justify-center gap-2 bg-indigo-600/20 border border-indigo-500/50 text-indigo-300 text-xs font-bold py-2.5 rounded-xl hover:bg-indigo-600/30 transition active:scale-95">
+                <button onclick="openAiPanel(); closeMobileGuardView()" class="guard-action guard-action-indigo">
                     <i data-lucide="bot" class="w-4 h-4"></i> Ask AI
                 </button>
-                <button onclick="triggerEmergencyAlert()" class="flex items-center justify-center gap-2 bg-rose-600/30 border border-rose-500/70 text-rose-300 text-xs font-bold py-2.5 rounded-xl hover:bg-rose-600/50 transition active:scale-95 animate-pulse">
+                <button onclick="triggerEmergencyAlert()" class="guard-action guard-action-danger">
                     <i data-lucide="siren" class="w-4 h-4"></i> RED ALERT
                 </button>
             </div>
 
-            <!-- Live Activity Feed -->
-            <div class="flex-1 overflow-hidden flex flex-col px-3 pb-2">
-                <div class="text-[10px] font-bold tracking-widest text-slate-500 mb-1.5 flex items-center gap-2">
+            <div class="guard-activity-panel">
+                <div class="guard-section-label"><span></span> LIVE ACTIVITY <b>RECENT EVENTS</b></div>
+                <div class="guard-activity-feed">
                     <i data-lucide="activity" class="w-3 h-3 text-emerald-500"></i>
-                    LIVE ACTIVITY FEED
-                </div>
-                <div id="mgFeed" class="flex-1 overflow-y-auto space-y-1.5 pr-1">
-                    <div class="text-[11px] text-slate-600 text-center py-4">Scanning for activity...</div>
+                    <div id="mgFeed">
+                        <div class="text-[11px] text-slate-600 text-center py-4">Scanning for activity...</div>
+                    </div>
                 </div>
             </div>
 
-            <!-- Bottom Safe Area -->
             <div class="h-2 bg-[#080d17]"></div>
         </div>
 
-        <!-- 🤖 AI CHAT PANEL -->
         <div id="aiChatPanel" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-end justify-end p-4">
             <div class="bg-[#0b111e] border border-indigo-500/50 w-full max-w-md rounded-2xl shadow-2xl flex flex-col" style="height:520px; box-shadow: 0 0 40px rgba(99,102,241,0.3)">
-                <!-- Header -->
                 <div class="flex items-center justify-between px-4 py-3 border-b border-indigo-900/60 bg-indigo-950/40 rounded-t-2xl">
                     <div class="flex items-center gap-3">
                         <div class="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-sm">🤖</div>
@@ -464,19 +432,16 @@
                     <button onclick="closeAiPanel()" class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
                 </div>
 
-                <!-- Messages -->
                 <div id="aiChatMessages" class="flex-1 overflow-y-auto p-4 space-y-3 text-xs">
-                    <!-- Welcome message -->
                     <div class="flex gap-2">
                         <div class="w-6 h-6 rounded-full bg-indigo-700 flex-shrink-0 flex items-center justify-center text-[10px]">🤖</div>
                         <div class="bg-indigo-950/60 border border-indigo-800/40 rounded-xl rounded-tl-none px-3 py-2 text-slate-300 max-w-[85%]">
-                            Assalam-o-Alaikum! I am NexusScan AI Security Assistant. Ask me anything about attendance, threats, system status, or visitor management.
+                            Hello! I am NexusScan AI Security Assistant. Ask me anything about attendance, threats, system status, or visitor management.
                             <div class="text-[10px] text-slate-600 mt-1">Suggested: "How many present?" · "Any threats?" · "System status?"</div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Input -->
                 <div class="p-3 border-t border-indigo-900/60">
                     <div class="flex gap-2">
                         <input id="aiChatInput" type="text" placeholder="Ask security question..." onkeydown="if(event.key==='Enter') sendAiMessage()"
@@ -493,7 +458,6 @@
             </div>
         </div>
 
-        <!-- REUSABLE SYSTEM DIALOG -->
         <div id="appDialog" onclick="if (event.target === this) closeAppDialog(false)" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-[90] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="appDialogTitle">
             <div id="appDialogPanel" class="system-dialog-panel w-full max-w-md bg-[#0f172a] border border-slate-700/80 rounded-2xl shadow-2xl">
                 <div class="flex items-start justify-between gap-4 px-5 py-4 border-b border-slate-800">
@@ -521,7 +485,6 @@
             </div>
         </div>
 
-        <!-- FOOTER -->
         <footer class="bg-[#0f172a] border-t border-slate-800 px-6 py-2.5 flex justify-between items-center text-[11px] font-mono text-slate-500 sticky bottom-0 z-40">
             <span>&copy; 2026 NexusScan AI Command Center. All systems operational.</span>
             <div>SYSTEM_LATENCY: <span class="text-emerald-400 font-bold">12ms</span></div>

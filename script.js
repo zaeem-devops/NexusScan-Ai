@@ -1,5 +1,6 @@
 let isSystemLocked = false;
 const video = document.getElementById('video');
+let cameraStream = null;
 const savedData = localStorage.getItem('attendance_records');
 let markedAttendance = new Set(savedData ? JSON.parse(savedData) : []);
 let faceMatcher = null;
@@ -10,12 +11,8 @@ let lastAnnouncement = "";
 let registeredDescriptors = [];
 let currentUserRole = null; // 'admin' | 'faculty' | 'guard'
 
-// API Base URL
 const API_BASE_URL = 'http://127.0.0.1:3000';
 
-// ============================================================
-// 🔐 LOGIN / LOGOUT / ROLE SYSTEM
-// ============================================================
 async function loginUser(event) {
     if (event) event.preventDefault();
 
@@ -27,7 +24,6 @@ async function loginUser(event) {
 
     if (!username || !password) return;
 
-    // Show loading state
     if (btnText) btnText.classList.add('hidden');
     if (btnLoader) btnLoader.classList.remove('hidden');
     if (errorEl) errorEl.classList.add('hidden');
@@ -41,12 +37,10 @@ async function loginUser(event) {
         const data = await res.json();
 
         if (data.success) {
-            // Store session
             sessionStorage.setItem('nx_token', data.token);
             sessionStorage.setItem('nx_role', data.role);
             sessionStorage.setItem('nx_user', data.username);
 
-            // Transition to dashboard
             showDashboard(data.role);
         } else {
             showLoginError(data.error || 'Access Denied!');
@@ -59,12 +53,24 @@ async function loginUser(event) {
     }
 }
 
+function togglePasswordVisibility() {
+    const passwordInput = document.getElementById('loginPassword');
+    const toggleButton = document.getElementById('togglePasswordButton');
+    if (!passwordInput || !toggleButton) return;
+
+    const isVisible = passwordInput.type === 'text';
+    passwordInput.type = isVisible ? 'password' : 'text';
+    toggleButton.setAttribute('aria-label', isVisible ? 'Show password' : 'Hide password');
+    toggleButton.setAttribute('title', isVisible ? 'Show password' : 'Hide password');
+    toggleButton.innerHTML = `<i data-lucide="${isVisible ? 'eye' : 'eye-off'}" class="w-4 h-4"></i>`;
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
 function showLoginError(message) {
     const errorEl = document.getElementById('loginError');
     if (errorEl) {
         errorEl.textContent = '⛔ ' + message;
         errorEl.classList.remove('hidden');
-        // Shake animation
         errorEl.style.animation = 'none';
         errorEl.offsetHeight; // trigger reflow
         errorEl.style.animation = 'shake 0.4s ease';
@@ -74,79 +80,66 @@ function showLoginError(message) {
 function showDashboard(role) {
     currentUserRole = role;
 
-    // Hide login, show dashboard
     const loginOverlay = document.getElementById('loginOverlay');
     const dashboard = document.getElementById('mainDashboard');
     if (loginOverlay) loginOverlay.classList.add('hidden');
     if (dashboard) dashboard.classList.remove('hidden');
 
-    // Apply role-based view
     applyRoleView(role);
 
-    // Start the app (camera, face detection, etc.)
     startApp();
 }
 
 function applyRoleView(role) {
-    // Set role badge
     const badge = document.getElementById('roleBadge');
     if (badge) {
         badge.classList.remove('hidden');
         const roleConfig = {
-            admin:   { text: '🛡️ ADMIN',   border: 'border-[#38bdf8]',  bg: 'bg-[#38bdf8]/10',  color: 'text-[#38bdf8]' },
+            admin: { text: '🛡️ ADMIN', border: 'border-[#38bdf8]', bg: 'bg-[#38bdf8]/10', color: 'text-[#38bdf8]' },
             faculty: { text: '🎓 FACULTY', border: 'border-violet-500', bg: 'bg-violet-500/10', color: 'text-violet-400' },
-            guard:   { text: '💂 GUARD',   border: 'border-emerald-500', bg: 'bg-emerald-500/10', color: 'text-emerald-400' }
+            guard: { text: '💂 GUARD', border: 'border-emerald-500', bg: 'bg-emerald-500/10', color: 'text-emerald-400' }
         };
         const cfg = roleConfig[role] || roleConfig.admin;
         badge.textContent = cfg.text;
         badge.className = `text-[10px] font-bold tracking-widest px-2.5 py-1 rounded-full border ${cfg.border} ${cfg.bg} ${cfg.color}`;
     }
 
-    // Hide elements not for this role
     if (role === 'faculty') {
-        // Faculty: hide Emergency, Enroll, Clear, Guard View buttons
         document.querySelectorAll('[data-role-hide="faculty"]').forEach(el => {
             el.style.display = 'none';
         });
     }
 
     if (role === 'guard') {
-        // Guard: auto-open Mobile Guard View after a short delay
         setTimeout(() => {
             openMobileGuardView();
         }, 800);
     }
 
-    // Show faculty section for admin
     if (role === 'admin') {
         const facultySection = document.getElementById('facultySection');
         if (facultySection) facultySection.classList.remove('hidden');
     }
 
-    // Refresh icons
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
 async function logoutUser() {
     if (!await showAppDialog({ title: 'END SESSION', message: 'Logout from NexusScan AI?', confirmLabel: 'LOG OUT', cancelLabel: 'CANCEL', danger: true })) return;
 
-    // Clear session
     sessionStorage.removeItem('nx_token');
     sessionStorage.removeItem('nx_role');
     sessionStorage.removeItem('nx_user');
     currentUserRole = null;
 
-    // Show login, hide dashboard
     const loginOverlay = document.getElementById('loginOverlay');
     const dashboard = document.getElementById('mainDashboard');
     if (loginOverlay) loginOverlay.classList.remove('hidden');
     if (dashboard) dashboard.classList.add('hidden');
 
-    // Close any open overlays
     closeMobileGuardView();
     closeAiPanel();
 
-    // Clear login fields
     const usernameEl = document.getElementById('loginUsername');
     const passwordEl = document.getElementById('loginPassword');
     const errorEl = document.getElementById('loginError');
@@ -155,7 +148,6 @@ async function logoutUser() {
     if (errorEl) errorEl.classList.add('hidden');
 }
 
-// Check if already logged in (page refresh)
 function checkExistingSession() {
     const token = sessionStorage.getItem('nx_token');
     const role = sessionStorage.getItem('nx_role');
@@ -167,16 +159,14 @@ function checkExistingSession() {
 }
 
 
-// Live Dashboard Clock Loop
 setInterval(() => {
     const clockEl = document.getElementById('liveClock');
     if (clockEl) clockEl.innerText = new Date().toLocaleTimeString();
-    
+
     const mgClockEl = document.getElementById('mobileGuardClock');
-    if (mgClockEl) mgClockEl.innerText = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    if (mgClockEl) mgClockEl.innerText = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }, 1000);
 
-// Core App Initializer
 async function startApp() {
     await startVideo();
     startSecondaryCamera();
@@ -185,7 +175,6 @@ async function startApp() {
         const statusEl = document.getElementById('systemStatus');
         if (statusEl) statusEl.innerText = "AI: Loading Models...";
 
-        // Local models first (demo-safe), CDN fallback
         const LOCAL_MODELS = './models';
         const CDN_MODELS = 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights';
         const nets = [
@@ -213,13 +202,13 @@ async function startApp() {
             baseDescriptors.length ? "success" : "warning"
         );
         detectFaces();
-        initStatsChart();  // 📊 Start Live Analytics Chart
+        initStatsChart();
     } catch (err) {
         console.error("AI Models fallback activated:", err);
         const statusEl = document.getElementById('systemStatus');
         if (statusEl) statusEl.innerText = "AI Engine: Ready (Manual Mode)";
         showToast("Camera Active - Manual Fallback Enabled", "warning");
-        initStatsChart(); // chart still works in fallback
+        initStatsChart();
     }
 }
 
@@ -306,8 +295,9 @@ async function startVideo() {
     const overlay = document.getElementById('cameraOffline');
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            if (video) video.srcObject = stream;
+            cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            attachCameraStream(video);
+            attachCameraStream(document.getElementById('mgVideo'));
             if (overlay) overlay.classList.add('hidden');
         } catch (err) {
             console.error("Camera access failed:", err);
@@ -319,7 +309,13 @@ async function startVideo() {
     }
 }
 
-// 📹 Dual-Camera Support: PIP feed from a second physical camera when available
+function attachCameraStream(target) {
+    if (!target || !cameraStream) return;
+    if (target.srcObject !== cameraStream) target.srcObject = cameraStream;
+    const playPromise = target.play();
+    if (playPromise) playPromise.catch(() => { });
+}
+
 async function startSecondaryCamera() {
     try {
         if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
@@ -341,7 +337,6 @@ async function startSecondaryCamera() {
     }
 }
 
-// 🏷️ Dynamic Face Registry — loads every enrolled person from /api/labels
 async function loadLabeledImages() {
     let labels = [];
     try {
@@ -370,7 +365,6 @@ async function loadLabeledImages() {
     } catch (e) { return []; }
 }
 
-// 👤 Runtime Enrollment — custom faces stored in browser localStorage
 let baseDescriptors = [];
 
 function loadCustomFaces() {
@@ -431,7 +425,6 @@ async function enrollNewFace() {
     speak(`${label} enrolled successfully`);
 }
 
-// 📐 Geometry quality gate — face must be close enough to analyze
 function hasValidGeometry(landmarks) {
     if (!landmarks) return false;
     const leftEye = landmarks.getLeftEye();
@@ -441,12 +434,6 @@ function hasValidGeometry(landmarks) {
     return eyeDistance > 12;
 }
 
-// ============================================================
-// 🛡️ REAL Anti-Spoofing: Blink Liveness via Eye Aspect Ratio
-// A photo keeps EAR perfectly constant — a live face blinks and
-// its landmarks micro-jitter. Tracks follow faces by centroid,
-// so normal movement never resets blink state.
-// ============================================================
 const livenessTracks = [];
 
 function pointDist(a, b) {
@@ -510,14 +497,11 @@ function updateLiveness(box, landmarks) {
     }
 
     const blinkLive = track.lastBlink > 0 && (now - track.lastBlink) < 6000;
-    // Fallback: >6s of natural landmark micro-movement also proves life
-    // (a printed photo produces zero EAR variance)
     const motionLive = (now - track.firstSeen) > 6000 && earStdDev(track.earHistory) > 0.012;
 
     return blinkLive || motionLive;
 }
 
-// 📸 Capture current frame for WhatsApp threat evidence
 function captureThreatSnapshot() {
     try {
         if (!video || !video.videoWidth) return null;
@@ -531,7 +515,6 @@ function captureThreatSnapshot() {
     } catch (e) { return null; }
 }
 
-// 🛡️ Sci-Fi Vector Mesh Detection Loop
 let detecting = false;
 async function detectFaces() {
     if (!video) return;
@@ -570,7 +553,6 @@ async function detectFaces() {
                 const isLive = geometryOk && updateLiveness(detection.detection.box, landmarks);
                 const isKnown = result.label !== 'unknown' && result.distance < 0.5;
 
-                // 🟢 Render 68-Point Vector Mesh
                 if (landmarks && landmarks.positions) {
                     const meshColor = isLive ? "rgba(57, 255, 20, 0.7)" : "rgba(239, 68, 68, 0.9)";
                     ctx.fillStyle = meshColor;
@@ -594,7 +576,6 @@ async function detectFaces() {
                     }
                 }
 
-                // Status Badges & Colors
                 const dist = typeof result.distance === 'number' ? result.distance.toFixed(2) : '-';
                 let boxColor, statusText;
                 if (!geometryOk) {
@@ -633,7 +614,6 @@ async function detectFaces() {
                         : "text-amber-400 font-bold animate-pulse";
                 }
 
-                // Handle Unknown / Spoof Suspects (evidence snapshot attached)
                 if (result.label === 'unknown' && geometryOk && !unknownDetected) {
                     counts.unknown++;
                     updateStatsUI();
@@ -653,7 +633,6 @@ async function detectFaces() {
                     setTimeout(() => { unknownDetected = false; }, 30000);
                 }
 
-                // Mark Attendance — only for known + live faces
                 if (isKnown && isLive) {
                     markAttendance(result.label);
                 }
@@ -718,9 +697,6 @@ async function triggerEmergencyAlert() {
     }
 }
 
-// ============================================================
-// 🎫 Gate Pass Verification (Guard Console)
-// ============================================================
 function openPassModal() {
     const modal = document.getElementById('passModal');
     const result = document.getElementById('passResult');
@@ -772,9 +748,6 @@ async function verifyGatePass(event) {
     }
 }
 
-// ============================================================
-// 👤 Visitor Flow
-// ============================================================
 function openVisitorModal() {
     const modal = document.getElementById('visitorModal');
     if (modal) modal.classList.remove('hidden');
@@ -838,8 +811,7 @@ function updateStatsUI() {
     if (document.getElementById('presentStat')) document.getElementById('presentStat').innerText = counts.present;
     if (document.getElementById('lateStat')) document.getElementById('lateStat').innerText = counts.late;
     if (document.getElementById('unknownStat')) document.getElementById('unknownStat').innerText = counts.unknown;
-    
-    // Mobile View updates
+
     if (document.getElementById('mgPresent')) document.getElementById('mgPresent').innerText = counts.present;
     if (document.getElementById('mgLate')) document.getElementById('mgLate').innerText = counts.late;
     if (document.getElementById('mgThreats')) document.getElementById('mgThreats').innerText = counts.unknown;
@@ -847,7 +819,6 @@ function updateStatsUI() {
     updateStatsChart();
 }
 
-// 📊 Restore real logs from server (MongoDB / Hybrid Memory) on load
 async function restoreLogsFromServer() {
     const logContainer = document.getElementById('attendanceBody');
     try {
@@ -863,15 +834,12 @@ async function restoreLogsFromServer() {
         counts.unknown = data.threats || 0;
         updateStatsUI();
 
-        // Server is the authority — rebuild marked set from server records only,
-        // so stale browser data can't block fresh attendance
         markedAttendance = new Set();
         (data.attendance || [])
             .filter(r => ['Present', 'Late'].includes(r.status))
             .forEach(r => markedAttendance.add(r.name));
         localStorage.setItem('attendance_records', JSON.stringify(Array.from(markedAttendance)));
     } catch (e) {
-        // server offline → local fallback
         displaySavedData();
     }
 }
@@ -909,10 +877,8 @@ function addTableRow(name, time, status) {
     `;
     logContainer.insertBefore(row, logContainer.firstChild);
 
-    // Mobile Feed Update
     const mgFeed = document.getElementById('mgFeed');
     if (mgFeed) {
-        // Remove empty state message if exists
         if (mgFeed.innerHTML.includes('Scanning for activity')) {
             mgFeed.innerHTML = '';
         }
@@ -985,8 +951,6 @@ function speak(text) {
     }
 }
 
-// 🔑 Faculty View — now handled by role-based login system
-// Kept for backward compatibility but redirects to login
 async function accessFacultyView() {
     showToast('Use the login system to access Faculty View!', 'warning');
 }
@@ -1001,7 +965,6 @@ if (document.getElementById('logSearch')) {
     });
 }
 
-// 🔒 Dynamic Remote Lockdown Polling + Voice Announcement Relay
 setInterval(async () => {
     try {
         const response = await fetch(`${API_BASE_URL}/api/system-status`);
@@ -1020,7 +983,6 @@ setInterval(async () => {
             if (statusEl && statusEl.innerText.includes("LOCKDOWN")) statusEl.innerText = "AI Processing: Active";
         }
 
-        // Relay WhatsApp ANNOUNCE broadcasts over local speakers
         if (data.announcement && data.announcement !== lastAnnouncement) {
             lastAnnouncement = data.announcement;
             speak(`Attention please. ${data.announcement}`);
@@ -1030,9 +992,6 @@ setInterval(async () => {
     } catch (e) { }
 }, 1500);
 
-// ============================================================
-// 📊 Live Analytics Chart (Chart.js Donut)
-// ============================================================
 let statsChartInstance = null;
 
 function initStatsChart() {
@@ -1115,9 +1074,6 @@ function updateStatsChart() {
     statsChartInstance.update();
 }
 
-// ============================================================
-// 🤖 AI Chat Panel
-// ============================================================
 function openAiPanel() {
     const panel = document.getElementById('aiChatPanel');
     if (panel) {
@@ -1132,7 +1088,6 @@ function closeAiPanel() {
     if (panel) panel.classList.add('hidden');
 }
 
-// Close panel when clicking backdrop
 document.addEventListener('click', (e) => {
     const panel = document.getElementById('aiChatPanel');
     if (panel && e.target === panel) closeAiPanel();
@@ -1155,13 +1110,13 @@ function appendAiMessage(text, sender = 'ai', source = 'local-ai') {
             <div class="w-6 h-6 rounded-full bg-indigo-700 flex-shrink-0 flex items-center justify-center text-[10px]">🤖</div>
             <div class="bg-indigo-950/60 border border-indigo-800/40 rounded-xl rounded-tl-none px-3 py-2 text-slate-300 max-w-[85%] text-xs">
                 ${text}
-                <div class="text-[9px] mt-1 text-slate-600">${sourceLabel} · ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+                <div class="text-[9px] mt-1 text-slate-600">${sourceLabel} · ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
             </div>`;
     } else {
         msgDiv.innerHTML = `
             <div class="bg-slate-800/80 border border-slate-700/40 rounded-xl rounded-tr-none px-3 py-2 text-slate-200 max-w-[85%] text-xs">
                 ${text}
-                <div class="text-[9px] mt-1 text-slate-500">You · ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+                <div class="text-[9px] mt-1 text-slate-500">You · ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
             </div>
             <div class="w-6 h-6 rounded-full bg-slate-700 flex-shrink-0 flex items-center justify-center text-[10px]">👮</div>`;
     }
@@ -1214,7 +1169,6 @@ async function sendAiMessage() {
             appendAiMessage(data.answer, 'ai', data.source);
             speak(data.answer);
 
-            // Update source badge
             const badge = document.getElementById('aiSourceBadge');
             if (badge) {
                 badge.textContent = data.source === 'gemini'
@@ -1263,23 +1217,15 @@ function startAiVoiceInput() {
     };
 }
 
-// Keep old startVoiceAssistant for backward compatibility — now opens panel
 function startVoiceAssistant() { openAiPanel(); }
 
-// ============================================================
-// 📱 Mobile Guard View
-// ============================================================
 function openMobileGuardView() {
     const overlay = document.getElementById('mobileGuardOverlay');
     if (overlay) {
         overlay.classList.remove('hidden');
-        
-        // Mirror the camera stream to mobile view
-        const mainVideo = document.getElementById('video');
+
         const mgVideo = document.getElementById('mgVideo');
-        if (mainVideo && mgVideo && mainVideo.srcObject) {
-            mgVideo.srcObject = mainVideo.srcObject;
-        }
+        attachCameraStream(mgVideo);
     }
 }
 
@@ -1288,14 +1234,8 @@ function closeMobileGuardView() {
     if (overlay) overlay.classList.add('hidden');
 }
 
-// ============================================================
-// 🚀 Kickoff — Session check first, then login or auto-start
-// ============================================================
 if (typeof lucide !== 'undefined') lucide.createIcons();
 
-// Only auto-start if we have an existing session
 if (!checkExistingSession()) {
-    // User needs to login — login overlay is already visible
-    // Focus username field
     setTimeout(() => document.getElementById('loginUsername')?.focus(), 300);
 }
