@@ -497,7 +497,43 @@ async function loadLabeledImages() {
 
 let baseDescriptors = [];
 
-function loadCustomFaces() {
+const FACE_MATCH_THRESHOLD = 0.48;
+
+function euclideanDist(a, b) {
+    if (!a || !b || a.length !== b.length) return 1;
+    let s = 0;
+    for (let i = 0; i < a.length; i++) {
+        const d = a[i] - b[i];
+        s += d * d;
+    }
+    return Math.sqrt(s);
+}
+
+async function loadCustomFaces() {
+    let serverProfiles = [];
+    try {
+        const res = await apiRequest(`${API_BASE_URL}/api/biometrics`);
+        if (res.ok) {
+            const data = await res.json();
+            serverProfiles = data.biometrics || [];
+        }
+    } catch (e) {
+        console.warn('Backend biometrics offline, using local cache:', e);
+    }
+
+    if (serverProfiles.length) {
+        // Sync local cache
+        const cache = {};
+        serverProfiles.forEach(p => { cache[p.name] = p.descriptors; });
+        localStorage.setItem('custom_faces', JSON.stringify(cache));
+
+        return serverProfiles.map(p => new faceapi.LabeledFaceDescriptors(
+            p.name,
+            (p.descriptors || []).map(arr => new Float32Array(arr))
+        ));
+    }
+
+    // Fallback to localStorage cache
     try {
         const raw = JSON.parse(localStorage.getItem('custom_faces') || '{}');
         return Object.entries(raw)
@@ -509,8 +545,9 @@ function loadCustomFaces() {
 }
 
 async function rebuildFaceMatcher() {
-    const all = [...baseDescriptors, ...loadCustomFaces()];
-    faceMatcher = all.length ? new faceapi.FaceMatcher(all, 0.5) : null;
+    const custom = await loadCustomFaces();
+    const all = [...baseDescriptors, ...custom];
+    faceMatcher = all.length ? new faceapi.FaceMatcher(all, FACE_MATCH_THRESHOLD) : null;
     registeredDescriptors = all;
 }
 
@@ -519,7 +556,23 @@ async function enrollNewFace() {
         showToast('Only administrators can enroll faces.', 'error');
         return;
     }
-    const name = await showAppDialog({ title: 'ENROLL NEW FACE', message: 'Enter the person\'s name to create a biometric profile.', inputLabel: 'PERSON NAME', placeholder: 'e.g. Aoun', confirmLabel: 'CONTINUE', cancelLabel: 'CANCEL' });
+
+    const consent = await showAppDialog({
+        title: 'BIOMETRIC ENROLLMENT CONSENT',
+        message: 'Explicit legal consent is required. By proceeding, you confirm the user consents to extracting and storing 128-dimensional mathematical facial vectors in compliance with the 30-day retention policy.',
+        confirmLabel: 'I AGREE & PROCEED',
+        cancelLabel: 'CANCEL'
+    });
+    if (!consent) return;
+
+    const name = await showAppDialog({
+        title: 'ENROLL NEW FACE',
+        message: 'Enter the person\'s full name for the biometric profile.',
+        inputLabel: 'PERSON NAME',
+        placeholder: 'e.g. Aoun',
+        confirmLabel: 'CONTINUE',
+        cancelLabel: 'CANCEL'
+    });
     if (!name || !name.trim()) return;
     const label = name.trim();
 
@@ -535,7 +588,7 @@ async function enrollNewFace() {
             const det = await faceapi
                 .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.25 }))
                 .withFaceLandmarks().withFaceDescriptor();
-            if (det) samples.push(Array.from(det.descriptor));
+            if (det && det.descriptor) samples.push(Array.from(det.descriptor));
         } catch (e) { }
         await new Promise(r => setTimeout(r, 350));
     }
@@ -545,17 +598,55 @@ async function enrollNewFace() {
         return;
     }
 
+    // Local Duplicate Face Detection check (< 0.38)
+    const testSample = samples[0];
+    for (const reg of registeredDescriptors) {
+        if (reg.label.toLowerCase() === label.toLowerCase()) continue;
+        for (const desc of reg.descriptors) {
+            const d = euclideanDist(testSample, Array.from(desc));
+            if (d < 0.38) {
+                showToast(`❌ Duplicate face rejected: matches '${reg.label}' (${d.toFixed(2)} < 0.38)`, "error");
+                await showAppDialog({
+                    title: 'DUPLICATE FACE DETECTED',
+                    message: `This face matches an already registered profile: '${reg.label}' (distance: ${d.toFixed(2)}). Enrollment aborted to maintain security.`,
+                    confirmLabel: 'OK',
+                    danger: true
+                });
+                return;
+            }
+        }
+    }
+
+    // Save to backend database
+    let serverSaved = false;
+    try {
+        const res = await apiRequest(`${API_BASE_URL}/api/enroll-face`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: label, descriptors: samples })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+            showToast(data.error || 'Server enrollment failed', 'error');
+            return;
+        }
+        serverSaved = true;
+    } catch (e) {
+        console.warn('Backend enrollment offline, storing locally:', e);
+    }
+
+    // Update local cache
     try {
         const store = JSON.parse(localStorage.getItem('custom_faces') || '{}');
         store[label] = samples;
         localStorage.setItem('custom_faces', JSON.stringify(store));
     } catch (e) {
-        showToast("Storage error during enrollment!", "error");
-        return;
+        console.warn('LocalStorage save failed:', e);
     }
 
     await rebuildFaceMatcher();
-    showToast(`✅ ${label} enrolled with ${samples.length} biometric samples!`, "success");
+    const saveNote = serverSaved ? '(Saved to Server DB)' : '(Stored Locally)';
+    showToast(`✅ ${label} enrolled with ${samples.length} samples! ${saveNote}`, "success");
     speak(`${label} enrolled successfully`);
 }
 
@@ -650,133 +741,156 @@ function captureThreatSnapshot() {
 }
 
 let detecting = false;
+let detectionTimeoutId = null;
+
+async function runDetectionFrame(canvas) {
+    if (detecting) return;
+    detecting = true;
+
+    try {
+        if (!video || video.paused || video.ended || video.readyState < 2 || isSystemLocked) {
+            return;
+        }
+
+        // Dynamically synchronize canvas dimensions to avoid drift/distortion on resize
+        const displayWidth = video.clientWidth || video.videoWidth || 640;
+        const displayHeight = video.clientHeight || video.videoHeight || 480;
+        if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
+            faceapi.matchDimensions(canvas, { width: displayWidth, height: displayHeight });
+        }
+
+        const displaySize = { width: displayWidth, height: displayHeight };
+        const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.25 }))
+            .withFaceLandmarks().withFaceDescriptors();
+
+        const resizedDetections = faceapi.resizeResults(detections, displaySize);
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const livenessEl = document.getElementById('livenessStatus');
+
+        resizedDetections.forEach(detection => {
+            const result = faceMatcher
+                ? faceMatcher.findBestMatch(detection.descriptor)
+                : { label: 'unknown', distance: 1 };
+            const landmarks = detection.landmarks;
+            const geometryOk = hasValidGeometry(landmarks);
+            const isLive = geometryOk && updateLiveness(detection.detection.box, landmarks);
+            const isKnown = result.label !== 'unknown' && result.distance <= FACE_MATCH_THRESHOLD;
+
+            if (landmarks && landmarks.positions) {
+                const meshColor = isLive ? "rgba(57, 255, 20, 0.7)" : "rgba(239, 68, 68, 0.9)";
+                ctx.fillStyle = meshColor;
+                ctx.strokeStyle = meshColor;
+                ctx.lineWidth = 0.8;
+
+                const positions = landmarks.positions;
+                positions.forEach(point => {
+                    ctx.beginPath();
+                    ctx.arc(point.x, point.y, 1.5, 0, 2 * Math.PI);
+                    ctx.fill();
+                });
+
+                for (let i = 0; i < positions.length - 1; i++) {
+                    if (i % 3 === 0) {
+                        ctx.beginPath();
+                        ctx.moveTo(positions[i].x, positions[i].y);
+                        ctx.lineTo(positions[i + 1].x, positions[i + 1].y);
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            const dist = typeof result.distance === 'number' ? result.distance.toFixed(2) : '-';
+            let boxColor, statusText;
+            if (!geometryOk) {
+                boxColor = "#f59e0b";
+                statusText = "TOO FAR — MOVE CLOSER";
+            } else if (isKnown && isLive) {
+                boxColor = "#39FF14";
+                statusText = `VERIFIED: ${result.label.toUpperCase()} [${dist}]`;
+            } else if (isKnown && !isLive) {
+                boxColor = "#f59e0b";
+                statusText = `BLINK TO VERIFY: ${result.label.toUpperCase()} [${dist}]`;
+            } else if (isLive) {
+                boxColor = "#ef4444";
+                statusText = `UNAUTHORIZED SUSPECT [${dist}]`;
+            } else {
+                boxColor = "#ef4444";
+                statusText = `🚨 SPOOF BLOCKED [${dist}]`;
+            }
+
+            const box = detection.detection.box;
+            ctx.strokeStyle = boxColor;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+            ctx.fillStyle = boxColor;
+            ctx.fillRect(box.x, box.y - 22, box.width, 22);
+
+            ctx.fillStyle = "#000000";
+            ctx.font = "bold 10px monospace";
+            ctx.fillText(statusText, box.x + 4, box.y - 6);
+
+            if (livenessEl) {
+                livenessEl.innerText = isLive ? "ACTIVE — BLINK VERIFIED" : "SCANNING LIVENESS...";
+                livenessEl.className = isLive
+                    ? "text-emerald-400 font-bold"
+                    : "text-amber-400 font-bold animate-pulse";
+            }
+
+            if (result.label === 'unknown' && geometryOk && !unknownDetected) {
+                counts.unknown++;
+                updateStatsUI();
+                unknownDetected = true;
+
+                const isSpoof = !isLive;
+                const threatMsg = isSpoof
+                    ? "SPOOF ATTACK BLOCKED: Photo/Video replay detected (no blink liveness) at Main Gate!"
+                    : "Unauthorized Suspect Scanned at Main Gate!";
+
+                addTableRow(
+                    isSpoof ? "Spoof Attempt" : "Unknown Suspect",
+                    new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    "Denied"
+                );
+                triggerThreatUI(threatMsg, captureThreatSnapshot());
+                setTimeout(() => { unknownDetected = false; }, 15000); // 15-second threat alert cooldown
+            }
+
+            if (isKnown && isLive) {
+                markAttendance(result.label);
+            }
+        });
+    } catch (e) {
+        console.error("Detection Frame Error:", e);
+    } finally {
+        detecting = false;
+        if (!isSystemLocked) {
+            detectionTimeoutId = setTimeout(() => runDetectionFrame(canvas), 200);
+        }
+    }
+}
+
 async function detectFaces() {
     if (!video) return;
-    const container = document.querySelector('.video-container');
+    if (detectionTimeoutId) {
+        clearTimeout(detectionTimeoutId);
+        detectionTimeoutId = null;
+    }
 
+    const container = document.querySelector('.video-container');
     const existingCanvas = container ? container.querySelector('canvas') : null;
     if (existingCanvas) existingCanvas.remove();
 
     const canvas = faceapi.createCanvasFromMedia(video);
     if (container) container.append(canvas);
 
-    const displaySize = { width: video.offsetWidth || 640, height: video.offsetHeight || 480 };
-    faceapi.matchDimensions(canvas, displaySize);
+    const displayWidth = video.clientWidth || video.videoWidth || 640;
+    const displayHeight = video.clientHeight || video.videoHeight || 480;
+    faceapi.matchDimensions(canvas, { width: displayWidth, height: displayHeight });
 
-    setInterval(async () => {
-        if (detecting) return; // prevent overlapping inference passes
-        detecting = true;
-        try {
-            if (video.paused || video.ended || isSystemLocked) return;
-
-            const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.25 }))
-                .withFaceLandmarks().withFaceDescriptors();
-
-            const resizedDetections = faceapi.resizeResults(detections, displaySize);
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            const livenessEl = document.getElementById('livenessStatus');
-
-            resizedDetections.forEach(detection => {
-                const result = faceMatcher
-                    ? faceMatcher.findBestMatch(detection.descriptor)
-                    : { label: 'unknown', distance: 1 };
-                const landmarks = detection.landmarks;
-                const geometryOk = hasValidGeometry(landmarks);
-                const isLive = geometryOk && updateLiveness(detection.detection.box, landmarks);
-                const isKnown = result.label !== 'unknown' && result.distance < 0.5;
-
-                if (landmarks && landmarks.positions) {
-                    const meshColor = isLive ? "rgba(57, 255, 20, 0.7)" : "rgba(239, 68, 68, 0.9)";
-                    ctx.fillStyle = meshColor;
-                    ctx.strokeStyle = meshColor;
-                    ctx.lineWidth = 0.8;
-
-                    const positions = landmarks.positions;
-                    positions.forEach(point => {
-                        ctx.beginPath();
-                        ctx.arc(point.x, point.y, 1.5, 0, 2 * Math.PI);
-                        ctx.fill();
-                    });
-
-                    for (let i = 0; i < positions.length - 1; i++) {
-                        if (i % 3 === 0) {
-                            ctx.beginPath();
-                            ctx.moveTo(positions[i].x, positions[i].y);
-                            ctx.lineTo(positions[i + 1].x, positions[i + 1].y);
-                            ctx.stroke();
-                        }
-                    }
-                }
-
-                const dist = typeof result.distance === 'number' ? result.distance.toFixed(2) : '-';
-                let boxColor, statusText;
-                if (!geometryOk) {
-                    boxColor = "#f59e0b";
-                    statusText = "TOO FAR — MOVE CLOSER";
-                } else if (isKnown && isLive) {
-                    boxColor = "#39FF14";
-                    statusText = `VERIFIED: ${result.label.toUpperCase()} [${dist}]`;
-                } else if (isKnown && !isLive) {
-                    boxColor = "#f59e0b";
-                    statusText = `BLINK TO VERIFY: ${result.label.toUpperCase()} [${dist}]`;
-                } else if (isLive) {
-                    boxColor = "#ef4444";
-                    statusText = `UNAUTHORIZED SUSPECT [${dist}]`;
-                } else {
-                    boxColor = "#ef4444";
-                    statusText = `🚨 SPOOF BLOCKED [${dist}]`;
-                }
-
-                const box = detection.detection.box;
-                ctx.strokeStyle = boxColor;
-                ctx.lineWidth = 2;
-                ctx.strokeRect(box.x, box.y, box.width, box.height);
-
-                ctx.fillStyle = boxColor;
-                ctx.fillRect(box.x, box.y - 22, box.width, 22);
-
-                ctx.fillStyle = "#000000";
-                ctx.font = "bold 10px monospace";
-                ctx.fillText(statusText, box.x + 4, box.y - 6);
-
-                if (livenessEl) {
-                    livenessEl.innerText = isLive ? "ACTIVE — BLINK VERIFIED" : "SCANNING LIVENESS...";
-                    livenessEl.className = isLive
-                        ? "text-emerald-400 font-bold"
-                        : "text-amber-400 font-bold animate-pulse";
-                }
-
-                if (result.label === 'unknown' && geometryOk && !unknownDetected) {
-                    counts.unknown++;
-                    updateStatsUI();
-                    unknownDetected = true;
-
-                    const isSpoof = !isLive;
-                    const threatMsg = isSpoof
-                        ? "SPOOF ATTACK BLOCKED: Photo/Video replay detected (no blink liveness) at Main Gate!"
-                        : "Unauthorized Suspect Scanned at Main Gate!";
-
-                    addTableRow(
-                        isSpoof ? "Spoof Attempt" : "Unknown Suspect",
-                        new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                        "Denied"
-                    );
-                    triggerThreatUI(threatMsg, captureThreatSnapshot());
-                    setTimeout(() => { unknownDetected = false; }, 30000);
-                }
-
-                if (isKnown && isLive) {
-                    markAttendance(result.label);
-                }
-            });
-        } catch (e) {
-            console.error("Detection Frame Error:", e);
-        } finally {
-            detecting = false;
-        }
-    }, 250);
+    runDetectionFrame(canvas);
 }
 
 function markAttendance(name) {
@@ -921,6 +1035,29 @@ async function sendVisitorRequest(event) {
         return;
     }
 
+    const cnicDigits = cnic.replace(/\D/g, '');
+    if (cnicDigits.length !== 13) {
+        await showAppDialog({
+            title: 'INVALID CNIC FORMAT',
+            message: 'Please enter a valid 13-digit Pakistani CNIC number (e.g. 35201-1234567-1).',
+            confirmLabel: 'CORRECT CNIC',
+            danger: true
+        });
+        return;
+    }
+
+    const phoneDigits = hostPhone.replace(/\D/g, '');
+    const isPakPhone = (phoneDigits.length === 11 && phoneDigits.startsWith('03')) || (phoneDigits.length === 12 && phoneDigits.startsWith('923'));
+    if (!isPakPhone) {
+        await showAppDialog({
+            title: 'INVALID PHONE FORMAT',
+            message: 'Please enter a valid Pakistani mobile number starting with 03 (e.g. 03236404459).',
+            confirmLabel: 'CORRECT PHONE',
+            danger: true
+        });
+        return;
+    }
+
     try {
         const response = await apiRequest(`${API_BASE_URL}/api/visitor-request`, {
             method: 'POST',
@@ -1020,9 +1157,27 @@ function addTableRow(name, time, status) {
     const row = document.createElement('div');
     row.className = "log-row flex justify-between items-center py-1.5 border-b border-slate-800/50 text-xs";
 
-    const isBad = status === "Late" || status === "Denied" || status === "Leave";
-    const pillClass = isBad ? "bg-rose-950/80 text-rose-400 border border-rose-500/20" : "bg-emerald-950/80 text-emerald-400 border border-emerald-500/20";
-    const badge = status === "Leave" ? "● Leave" : (isBad ? "● Deny" : "● Pres");
+    let pillClass = "bg-emerald-950/80 text-emerald-400 border border-emerald-500/20";
+    let badge = "● Pres";
+    let feedColor = "bg-emerald-500";
+    let feedText = "text-emerald-300";
+
+    if (status === "Late") {
+        pillClass = "bg-amber-950/80 text-amber-400 border border-amber-500/20";
+        badge = "● Late";
+        feedColor = "bg-amber-500";
+        feedText = "text-amber-400 font-bold";
+    } else if (status === "Leave") {
+        pillClass = "bg-violet-950/80 text-violet-400 border border-violet-500/20";
+        badge = "● Leave";
+        feedColor = "bg-violet-500";
+        feedText = "text-violet-300 font-bold";
+    } else if (status === "Denied") {
+        pillClass = "bg-rose-950/80 text-rose-400 border border-rose-500/20";
+        badge = "● Deny";
+        feedColor = "bg-rose-500";
+        feedText = "text-rose-400 font-bold";
+    }
 
     row.innerHTML = `
         <span class="text-slate-200 font-medium">${name}</span>
@@ -1040,8 +1195,8 @@ function addTableRow(name, time, status) {
         mgRow.className = "flex justify-between items-center bg-slate-800/40 p-2 rounded border border-slate-700/50 text-[11px] mb-1.5";
         mgRow.innerHTML = `
             <div class="flex items-center gap-2">
-                <div class="w-1.5 h-1.5 rounded-full ${isBad ? 'bg-rose-500' : 'bg-emerald-500'} animate-pulse"></div>
-                <span class="${isBad ? 'text-rose-400 font-bold' : 'text-emerald-300'}">${name}</span>
+                <div class="w-1.5 h-1.5 rounded-full ${feedColor} animate-pulse"></div>
+                <span class="${feedText}">${name}</span>
             </div>
             <div class="text-slate-500 text-[9px]">${time}</div>
         `;
@@ -1056,7 +1211,12 @@ async function manualEntry() {
     }
     const name = await showAppDialog({ title: 'MANUAL ATTENDANCE', message: 'Enter the student name for a manual attendance record.', inputLabel: 'STUDENT NAME', placeholder: 'e.g. Safdar', confirmLabel: 'MARK PRESENT', cancelLabel: 'CANCEL' });
     if (name && name.trim() !== "") {
-        markAttendance(name.trim());
+        const studentName = name.trim();
+        if (markedAttendance.has(studentName)) {
+            showToast(`${studentName} is already marked present today!`, "warning");
+            return;
+        }
+        markAttendance(studentName);
     }
 }
 
@@ -1065,11 +1225,25 @@ async function clearDatabase() {
         showToast('Only administrators can clear logs.', 'error');
         return;
     }
-    if (await showAppDialog({ title: 'CLEAR SESSION LOGS', message: 'Are you sure you want to clear local session logs? This cannot be undone.', confirmLabel: 'CLEAR LOGS', cancelLabel: 'CANCEL', danger: true })) {
+    if (await showAppDialog({ title: 'CLEAR ALL LOGS', message: 'Are you sure you want to wipe all attendance and threat logs from server and local storage? This cannot be undone.', confirmLabel: 'WIPE ALL LOGS', cancelLabel: 'CANCEL', danger: true })) {
+        try {
+            const res = await apiRequest(`${API_BASE_URL}/api/logs`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+                showToast("All Server & Local Logs Wiped", "success");
+            } else {
+                showToast(data.error || 'Server logs clear failed', 'error');
+            }
+        } catch (e) {
+            console.warn('Backend clear logs offline:', e);
+            showToast("Local Logs Cleared (Backend offline)", "warning");
+        }
         localStorage.removeItem('attendance_records');
         markedAttendance.clear();
+        counts.present = 0;
+        counts.late = 0;
+        counts.unknown = 0;
         displaySavedData();
-        showToast("Local Session Cleared", "success");
     }
 }
 
@@ -1106,7 +1280,9 @@ async function exportLogs() {
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
         link.download = `NexusScan_Report_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        document.body.appendChild(link);
         link.click();
+        link.remove();
         URL.revokeObjectURL(link.href);
     } catch (error) {
         showToast('Unable to export logs. Please try again.', 'error');
@@ -1228,7 +1404,7 @@ function initStatsChart() {
 
 function updateStatsChart() {
     if (!statsChartInstance) return;
-    const present = counts.present - counts.late; // pure present (not late)
+    const present = Math.max(0, counts.present - counts.late); // pure present (not late)
     const late = counts.late;
     const threats = counts.unknown;
     const total = present + late + threats;
@@ -1403,6 +1579,10 @@ function startAiVoiceInput() {
     recognition.onerror = () => {
         if (voiceBtn) voiceBtn.classList.remove('bg-indigo-500', 'border-indigo-400');
         showToast('Mic timeout — click mic again to retry!', 'error');
+    };
+
+    recognition.onend = () => {
+        if (voiceBtn) voiceBtn.classList.remove('bg-indigo-500', 'border-indigo-400');
     };
 }
 

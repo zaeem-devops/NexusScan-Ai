@@ -108,11 +108,18 @@ const ThreatSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
+const BiometricSchema = new mongoose.Schema({
+    name: { type: String, required: true, unique: true },
+    descriptors: { type: [[Number]], required: true },
+    createdAt: { type: Date, default: Date.now }
+});
+
 const Attendance = mongoose.model('Attendance', AttendanceSchema);
 const VisitorPass = mongoose.model('VisitorPass', VisitorPassSchema);
 const Threat = mongoose.model('Threat', ThreatSchema);
+const Biometric = mongoose.model('Biometric', BiometricSchema);
 
-const memoryStore = { attendance: [], passes: [], threats: [] };
+const memoryStore = { attendance: [], passes: [], threats: [], biometrics: [] };
 let mongoReady = false;
 
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/nexusScanAI';
@@ -122,9 +129,15 @@ mongoose.connect(MONGO_URI)
     .catch(() => console.log('⚠️ Local MongoDB not detected! Running server in Hybrid Memory Mode.'));
 
 async function saveAttendance(record) {
-    if (mongoReady) { await Attendance.create(record); return; }
+    if (mongoReady) { return Attendance.create(record); }
     record.date = record.date || new Date().toDateString();
-    memoryStore.attendance.push({ ...record, createdAt: new Date() });
+    const copy = {
+        _id: 'att_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9),
+        ...record,
+        createdAt: new Date()
+    };
+    memoryStore.attendance.push(copy);
+    return copy;
 }
 
 async function findAttendanceToday(name) {
@@ -142,7 +155,11 @@ async function getAllAttendance() {
 
 async function saveVisitorPass(doc) {
     if (mongoReady) return VisitorPass.create(doc);
-    const copy = { ...doc, createdAt: new Date() };
+    const copy = {
+        _id: 'pass_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9),
+        ...doc,
+        createdAt: new Date()
+    };
     memoryStore.passes.push(copy);
     return copy;
 }
@@ -155,21 +172,31 @@ async function updateVisitorPass(id, patch) {
 }
 
 async function findPendingPassForHost(hostPhone) {
+    const norm = String(hostPhone || '').replace(/\D/g, '');
+    const alt = norm.startsWith('92') ? '0' + norm.substring(2) : (norm.startsWith('0') ? '92' + norm.substring(1) : norm);
     if (mongoReady) {
-        return VisitorPass.findOne({ hostPhone, status: 'pending' }).sort({ createdAt: -1 });
+        return VisitorPass.findOne({ hostPhone: { $in: [norm, alt] }, status: 'pending' }).sort({ createdAt: -1 });
     }
     return [...memoryStore.passes].reverse()
-        .find(p => p.hostPhone === hostPhone && p.status === 'pending');
+        .find(p => (p.hostPhone === norm || p.hostPhone === alt) && p.status === 'pending');
 }
 
 async function findPassByCode(passCode) {
-    if (mongoReady) return VisitorPass.findOne({ passCode });
-    return memoryStore.passes.find(p => p.passCode === passCode);
+    if (!passCode) return null;
+    const code = passCode.trim().toUpperCase();
+    if (mongoReady) return VisitorPass.findOne({ passCode: code });
+    return memoryStore.passes.find(p => String(p.passCode || '').toUpperCase() === code);
 }
 
 async function saveThreat(doc) {
-    if (mongoReady) { await Threat.create(doc); return; }
-    memoryStore.threats.push({ ...doc, createdAt: new Date() });
+    if (mongoReady) { return Threat.create(doc); }
+    const copy = {
+        _id: 'threat_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9),
+        ...doc,
+        createdAt: new Date()
+    };
+    memoryStore.threats.push(copy);
+    return copy;
 }
 
 async function countThreatsToday() {
@@ -178,6 +205,44 @@ async function countThreatsToday() {
         return Threat.countDocuments({ createdAt: { $gte: new Date(new Date().setHours(0, 0, 0, 0)) } });
     }
     return memoryStore.threats.filter(t => new Date(t.createdAt).toDateString() === today).length;
+}
+
+async function getAllBiometrics() {
+    if (mongoReady) return Biometric.find().lean();
+    return memoryStore.biometrics;
+}
+
+async function saveBiometric(name, descriptors) {
+    if (mongoReady) {
+        return Biometric.findOneAndUpdate(
+            { name },
+            { descriptors, createdAt: new Date() },
+            { upsert: true, new: true }
+        );
+    }
+    const idx = memoryStore.biometrics.findIndex(b => b.name.toLowerCase() === name.toLowerCase());
+    const doc = {
+        _id: 'bio_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9),
+        name,
+        descriptors,
+        createdAt: new Date()
+    };
+    if (idx >= 0) {
+        memoryStore.biometrics[idx] = doc;
+    } else {
+        memoryStore.biometrics.push(doc);
+    }
+    return doc;
+}
+
+function euclideanDistance(arr1, arr2) {
+    if (!arr1 || !arr2 || arr1.length !== arr2.length) return 1;
+    let sum = 0;
+    for (let i = 0; i < arr1.length; i++) {
+        const diff = arr1[i] - arr2[i];
+        sum += diff * diff;
+    }
+    return Math.sqrt(sum);
 }
 
 const whatsappClient = new Client({
@@ -213,11 +278,67 @@ whatsappClient.on('ready', () => {
 });
 
 function formatWhatsAppNumber(phone) {
-    let cleaned = String(phone).replace(/\D/g, '');
+    let cleaned = String(phone || '').replace(/\D/g, '');
+    if (!cleaned) return '';
     if (cleaned.startsWith('03')) {
         cleaned = '92' + cleaned.substring(1);
+    } else if (cleaned.length === 10 && cleaned.startsWith('3')) {
+        cleaned = '92' + cleaned;
     }
     return cleaned.endsWith('@c.us') ? cleaned : `${cleaned}@c.us`;
+}
+
+function validatePakistaniCNIC(cnic) {
+    const cleaned = String(cnic || '').replace(/\D/g, '');
+    return cleaned.length === 13;
+}
+
+function validatePakistaniPhone(phone) {
+    const cleaned = String(phone || '').replace(/\D/g, '');
+    if (cleaned.length === 11 && cleaned.startsWith('03')) return true;
+    if (cleaned.length === 12 && cleaned.startsWith('923')) return true;
+    return false;
+}
+
+async function safeSendWhatsApp(to, content, options) {
+    try {
+        if (!whatsappClient.info) {
+            console.log(`ℹ️ WhatsApp not ready — message to ${to} skipped.`);
+            return false;
+        }
+        await whatsappClient.sendMessage(to, content, options);
+        return true;
+    } catch (err) {
+        console.warn(`⚠️ WhatsApp send failed to ${to}:`, err.message);
+        return false;
+    }
+}
+
+// Sliding-window rate limiter: max 5 login attempts per minute per IP
+const loginAttempts = new Map();
+function loginRateLimiter(req, res, next) {
+    const ip = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+    const now = Date.now();
+    const windowMs = 60 * 1000;
+    const maxAttempts = 5;
+
+    let record = loginAttempts.get(ip);
+    if (!record || (now - record.startTime) > windowMs) {
+        record = { count: 0, startTime: now };
+        loginAttempts.set(ip, record);
+    }
+
+    if (record.count >= maxAttempts) {
+        const remainingSeconds = Math.ceil((windowMs - (now - record.startTime)) / 1000);
+        return res.status(429).json({
+            success: false,
+            error: `Too many login attempts. Please wait ${remainingSeconds} seconds before trying again.`
+        });
+    }
+
+    req.loginAttemptRecord = record;
+    req.clientIp = ip;
+    next();
 }
 
 function isAdminChat(chatId) {
@@ -227,11 +348,10 @@ function isAdminChat(chatId) {
         : '';
     if (ownId && digits.startsWith(ownId)) return true;
     if (!ADMIN_WHITELIST.length) return true; // demo mode — set ADMIN_WHITELIST in .env for real security
-    return ADMIN_WHITELIST.some(admin => digits.startsWith(admin));
+    return ADMIN_WHITELIST.some(admin => digits === admin || digits.endsWith(admin));
 }
 
-
-app.post('/api/auth', async (req, res) => {
+app.post(['/api/auth', '/api/login', '/api/auth/login'], loginRateLimiter, async (req, res) => {
     const { username, password } = req.body || {};
     const normalizedUsername = String(username || '').trim().toLowerCase();
     if (!normalizedUsername || !password) {
@@ -240,13 +360,17 @@ app.post('/api/auth', async (req, res) => {
 
     const user = USERS[normalizedUsername];
     if (!user) {
+        if (req.loginAttemptRecord) req.loginAttemptRecord.count++;
         return res.status(401).json({ success: false, error: 'Invalid username!' });
     }
 
     const isValid = await bcrypt.compare(password, user.passwordHash);
     if (!isValid) {
+        if (req.loginAttemptRecord) req.loginAttemptRecord.count++;
         return res.status(401).json({ success: false, error: 'Incorrect password!' });
     }
+
+    if (req.clientIp) loginAttempts.delete(req.clientIp);
 
     const token = jwt.sign(
         { username: normalizedUsername, role: user.role },
@@ -274,6 +398,20 @@ app.post('/api/visitor-request', authenticateToken, authorizeRoles('admin', 'fac
             return res.status(400).json({ success: false, error: 'Please complete all required fields.' });
         }
 
+        if (!validatePakistaniCNIC(cnic)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid CNIC format. Pakistani CNIC must contain 13 digits (e.g. 35201-1234567-1).'
+            });
+        }
+
+        if (!validatePakistaniPhone(hostPhone)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid phone format. Please enter a valid Pakistani mobile number (e.g. 03236404459).'
+            });
+        }
+
         const formattedPhone = formatWhatsAppNumber(hostPhone);
         await saveVisitorPass({
             visitorName, cnic, purpose,
@@ -287,9 +425,7 @@ app.post('/api/visitor-request', authenticateToken, authorizeRoles('admin', 'fac
             `📌 *Purpose:* ${purpose}\n\n` +
             `Reply *1* to APPROVE | Reply *2* to REJECT`;
 
-        if (whatsappClient.info) {
-            await whatsappClient.sendMessage(formattedPhone, msg);
-        }
+        await safeSendWhatsApp(formattedPhone, msg);
         console.log(`📩 Visitor request sent to ${formattedPhone}`);
 
         return res.status(200).json({
@@ -340,16 +476,17 @@ app.post('/api/attendance', authenticateToken, authorizeRoles('admin', 'faculty'
         const { name, status, phone, time } = req.body || {};
         if (!name || !status) return res.status(400).json({ success: false, error: 'Name & status required!' });
 
+        // CRITICAL BUG FIX: Check already marked BEFORE saving to avoid duplicate rows
         const alreadyMarked = ['Present', 'Late'].includes(status) && await findAttendanceToday(name);
+        if (alreadyMarked) {
+            return res.json({ success: true, message: 'Already marked today — skipped.' });
+        }
+
         await saveAttendance({
             name,
             status,
             time: time || new Date().toLocaleTimeString()
         });
-
-        if (alreadyMarked) {
-            return res.json({ success: true, message: 'Already marked today — log synced, WhatsApp skipped.' });
-        }
 
         const recipientPhone = formatWhatsAppNumber(phone || SECURITY_PHONE);
         const statusMsg = `📋 *NexusScan Attendance Alert*\n\n` +
@@ -357,9 +494,7 @@ app.post('/api/attendance', authenticateToken, authorizeRoles('admin', 'faculty'
             `📌 *Status:* ${String(status).toUpperCase()}\n` +
             `⏰ *Time:* ${new Date().toLocaleTimeString()}`;
 
-        if (whatsappClient.info) {
-            await whatsappClient.sendMessage(recipientPhone, statusMsg);
-        }
+        await safeSendWhatsApp(recipientPhone, statusMsg);
         console.log(`📩 Notification sent for ${name} (${status}) to ${recipientPhone}`);
         return res.json({ success: true, message: 'Notification sent successfully!' });
     } catch (err) {
@@ -368,26 +503,35 @@ app.post('/api/attendance', authenticateToken, authorizeRoles('admin', 'faculty'
     }
 });
 
+// 15-second threat alert cooldown defense to prevent WhatsApp spam bans
+let lastThreatDispatchTime = 0;
+const THREAT_ALERT_COOLDOWN_MS = 15000;
+
 app.post('/api/threat-alert', authenticateToken, authorizeRoles('admin', 'guard'), async (req, res) => {
     try {
         const { reason, snapshot } = req.body || {};
         await saveThreat({ reason: reason || 'Unknown threat', hasSnapshot: Boolean(snapshot) });
 
-        const securityNumber = formatWhatsAppNumber(SECURITY_PHONE);
-        const alertMsg = `🚨 *EMERGENCY BREACH ALERT:*\n${reason || 'Unidentified Threat or Security Bypass Detected at Main Gate!'}` +
-            `\n⏰ ${new Date().toLocaleTimeString()}`;
+        const now = Date.now();
+        if (now - lastThreatDispatchTime >= THREAT_ALERT_COOLDOWN_MS) {
+            lastThreatDispatchTime = now;
+            const securityNumber = formatWhatsAppNumber(SECURITY_PHONE);
+            const alertMsg = `🚨 *EMERGENCY BREACH ALERT:*\n${reason || 'Unidentified Threat or Security Bypass Detected at Main Gate!'}` +
+                `\n⏰ ${new Date().toLocaleTimeString()}`;
 
-        if (whatsappClient.info) {
             if (snapshot) {
                 const base64 = snapshot.replace(/^data:image\/\w+;base64,/, '');
                 const media = new MessageMedia('image/jpeg', base64, 'nexus-threat-capture.jpg');
-                await whatsappClient.sendMessage(securityNumber, media, { caption: alertMsg });
+                await safeSendWhatsApp(securityNumber, media, { caption: alertMsg });
             } else {
-                await whatsappClient.sendMessage(securityNumber, alertMsg);
+                await safeSendWhatsApp(securityNumber, alertMsg);
             }
+            console.log('🚨 Threat Alert Dispatched via WhatsApp!');
+        } else {
+            console.log('⏳ Threat logged in DB, but WhatsApp alert throttled (15-second defense active).');
         }
-        console.log('🚨 Threat Alert Dispatched!');
-        return res.json({ success: true, message: 'Threat alert broadcast fired!' });
+
+        return res.json({ success: true, message: 'Threat alert logged and broadcast processed!' });
     } catch (err) {
         console.error('Threat Alert Error:', err);
         return res.status(500).json({ success: false, error: err.message });
@@ -398,15 +542,99 @@ app.get('/api/logs', authenticateToken, authorizeRoles('admin', 'faculty', 'guar
     const attendance = await getAllAttendance();
     const today = new Date().toDateString();
     const todays = attendance.filter(r => r.date === today);
+
+    // Deduplicate headcount by person name
+    const uniquePresent = new Set(todays.filter(r => ['Present', 'Late'].includes(r.status)).map(r => r.name.toLowerCase()));
+    const uniqueLate = new Set(todays.filter(r => r.status === 'Late').map(r => r.name.toLowerCase()));
+
     res.json({
         attendance: attendance.slice(0, 100).map(r => ({ name: r.name, time: r.time, status: r.status })),
         counts: {
-            present: todays.filter(r => ['Present', 'Late'].includes(r.status)).length,
-            late: todays.filter(r => r.status === 'Late').length
+            present: uniquePresent.size,
+            late: uniqueLate.size
         },
         threats: await countThreatsToday(),
         locked: isSystemLocked
     });
+});
+
+app.delete('/api/logs', authenticateToken, authorizeRoles('admin'), async (req, res) => {
+    try {
+        if (mongoReady) {
+            await Attendance.deleteMany({});
+            await Threat.deleteMany({});
+        }
+        memoryStore.attendance = [];
+        memoryStore.threats = [];
+        console.log(`🗑️ Session logs cleared by Admin (${req.user.username})`);
+        return res.json({ success: true, message: 'All attendance and threat logs have been wiped.' });
+    } catch (err) {
+        console.error('Clear Logs Error:', err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/privacy-policy', (req, res) => {
+    res.json({
+        success: true,
+        title: "NexusScan AI Biometric Privacy & Retention Policy",
+        retentionDays: 30,
+        policy: {
+            rawImages: "No raw facial photographs are stored permanently. Video frames are immediately processed into 128-dimensional floating point mathematical vectors and discarded.",
+            biometrics: "Mathematical facial descriptors are stored securely and used strictly for identity verification and access control.",
+            consent: "Explicit user consent is mandatory prior to biometric enrollment.",
+            retention: "Access logs and temporary threat snapshots are retained for a 30-day compliance cycle, after which they are subject to automated purging.",
+            rights: "Users may request deletion of their biometric descriptors by contacting a system administrator."
+        }
+    });
+});
+
+app.get('/api/biometrics', authenticateToken, authorizeRoles('admin', 'faculty', 'guard'), async (req, res) => {
+    try {
+        const biometrics = await getAllBiometrics();
+        return res.json({ success: true, biometrics });
+    } catch (err) {
+        console.error('Fetch Biometrics Error:', err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/enroll-face', authenticateToken, authorizeRoles('admin'), async (req, res) => {
+    try {
+        const { name, descriptors } = req.body || {};
+        const label = String(name || '').trim();
+        if (!label) return res.status(400).json({ success: false, error: 'Person name is required.' });
+        if (!Array.isArray(descriptors) || descriptors.length < 3) {
+            return res.status(400).json({ success: false, error: 'At least 3 valid facial descriptor samples are required.' });
+        }
+
+        // Duplicate Face Detection (Euclidean distance < 0.38)
+        const existingProfiles = await getAllBiometrics();
+        const incomingAvg = descriptors[0];
+        for (const profile of existingProfiles) {
+            if (profile.name.toLowerCase() === label.toLowerCase()) continue;
+            for (const sample of (profile.descriptors || [])) {
+                const dist = euclideanDistance(incomingAvg, sample);
+                if (dist < 0.38) {
+                    return res.status(409).json({
+                        success: false,
+                        error: `Duplicate face detected: looks identical to already enrolled profile '${profile.name}' (distance: ${dist.toFixed(3)} < 0.38).`
+                    });
+                }
+            }
+        }
+
+        const saved = await saveBiometric(label, descriptors);
+        console.log(`✅ Biometric profile enrolled: ${label} (${descriptors.length} samples)`);
+        return res.json({
+            success: true,
+            message: `Profile '${label}' enrolled successfully.`,
+            biometric: { name: saved.name, count: descriptors.length }
+        });
+    } catch (err) {
+        console.error('Enroll Face Error:', err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
 });
 
 app.get('/api/labels', authenticateToken, authorizeRoles('admin', 'faculty', 'guard'), (req, res) => {
@@ -484,8 +712,10 @@ app.post('/api/ask-ai', authenticateToken, authorizeRoles('admin', 'faculty', 'g
         const attendance = await getAllAttendance();
         const today = new Date().toDateString();
         const todayRecords = attendance.filter(r => r.date === today);
-        const presentCount = todayRecords.filter(r => ['Present', 'Late'].includes(r.status)).length;
-        const lateCount = todayRecords.filter(r => r.status === 'Late').length;
+        const uniquePresent = new Set(todayRecords.filter(r => ['Present', 'Late'].includes(r.status)).map(r => r.name.toLowerCase()));
+        const uniqueLate = new Set(todayRecords.filter(r => r.status === 'Late').map(r => r.name.toLowerCase()));
+        const presentCount = uniquePresent.size;
+        const lateCount = uniqueLate.size;
         const threatCount = await countThreatsToday();
         const recentNames = todayRecords.slice(0, 10).map(r => `${r.name} (${r.status})`).join(', ');
 
@@ -663,8 +893,8 @@ async function handleMessage(msg) {
                     `📱 *Approved By:* ${hostNumber}\n\n` +
                     `Please allow entry.`;
 
-                if (whatsappClient.info && msg.from !== guardNumber) {
-                    await whatsappClient.sendMessage(guardNumber, guardAlertMsg);
+                if (msg.from !== guardNumber) {
+                    await safeSendWhatsApp(guardNumber, guardAlertMsg);
                 }
 
                 console.log(`✅ Visitor ${pending.visitorName} approved by ${msg.from} — Pass ${passCode}`);
@@ -687,18 +917,26 @@ whatsappClient.on('message_create', (msg) => {
     if (msg.fromMe) handleMessage(msg);
 });
 
-app.listen(PORT, '127.0.0.1', () => {
-    console.log(`🚀 NexusScan AI Backend Engine Running on http://127.0.0.1:${PORT}`);
+whatsappClient.on('disconnected', (reason) => {
+    console.warn('⚠️ NexusScan WhatsApp Client Disconnected:', reason);
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 NexusScan AI Backend Engine Running on port ${PORT}`);
 });
 
 process.on('uncaughtException', error => {
-    if (error.message.includes('browser is already running for')) {
+    if (error.message && error.message.includes('browser is already running for')) {
         console.warn(`⚠️ WhatsApp service unavailable: ${error.message}`);
         console.warn('Authentication and dashboard APIs remain available.');
         return;
     }
     console.error('Fatal server error:', error);
     process.exitCode = 1;
+});
+
+process.on('unhandledRejection', (reason) => {
+    console.warn('⚠️ Unhandled promise rejection (non-fatal):', reason && reason.message ? reason.message : reason);
 });
 
 whatsappClient.initialize().catch(error => {

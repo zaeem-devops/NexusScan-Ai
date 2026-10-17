@@ -168,13 +168,17 @@ All protected endpoints require `Authorization: Bearer <token>`.
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| `POST` | `/api/auth` | Sign in and receive a JWT. |
+| `POST` | `/api/auth` | Sign in and receive a JWT (rate-limited). |
 | `GET` | `/api/auth/me` | Validate the current session. |
-| `POST` | `/api/attendance` | Create an attendance record. |
+| `POST` | `/api/attendance` | Create an attendance record (deduplicated). |
 | `GET` | `/api/logs` | Read attendance, threat counts, and lock state. |
-| `POST` | `/api/visitor-request` | Submit a visitor approval request. |
+| `DELETE` | `/api/logs` | Wipe all attendance and threat logs (Admin only). |
+| `POST` | `/api/visitor-request` | Submit a visitor approval request (strict CNIC/Phone validation). |
 | `POST` | `/api/verify-pass` | Verify a visitor pass. |
-| `POST` | `/api/threat-alert` | Record and dispatch a threat alert. |
+| `POST` | `/api/threat-alert` | Record and dispatch a threat alert (15s cooldown defense). |
+| `GET` | `/api/biometrics` | Retrieve persistent biometric facial profiles. |
+| `POST` | `/api/enroll-face` | Enroll biometric profile with duplicate face check (< 0.38). |
+| `GET` | `/api/privacy-policy` | Read 30-day compliance retention and privacy policy. |
 | `GET` | `/api/export/excel` | Download attendance as an `.xlsx` file. |
 | `POST` | `/api/ask-ai` | Ask the role-authorized AI assistant a question. |
 | `GET` | `/api/system-status` | Read lockdown and announcement status. |
